@@ -1,0 +1,68 @@
+---
+import MobileLayout from '../../layouts/MobileLayout.astro';
+import Flash from '../../components/Flash.astro';
+
+const email = Astro.url.searchParams.get('email') ?? '';
+---
+
+<MobileLayout title="Activate account" heading="Activate your portal" chrome={false}>
+  <div class="mx-auto max-w-sm">
+    <p class="mb-5 text-sm text-slate-600">
+      Use the work email your HR team holds on your employee record. If it does not match,
+      the account will not be activated.
+    </p>
+
+    <div class="card p-5">
+      <Flash />
+
+      <form method="post" action="/api/auth/register" class="space-y-4">
+        <div>
+          <label class="field-label" for="email">Work email</label>
+          <input
+            class="field-input"
+            id="email"
+            name="email"
+            type="email"
+            value={email}
+            autocomplete="username"
+            required
+            autofocus
+          />
+        </div>
+
+        <div>
+          <label class="field-label" for="password">Choose a password</label>
+          <input
+            class="field-input"
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          />
+          <p class="field-hint">At least 8 characters.</p>
+        </div>
+
+        <div>
+          <label class="field-label" for="confirm">Confirm password</label>
+          <input
+            class="field-input"
+            id="confirm"
+            name="confirm"
+            type="password"
+            autocomplete="new-password"
+            minlength="8"
+            required
+          />
+        </div>
+
+        <button type="submit" class="btn-primary w-full">Activate account</button>
+      </form>
+
+      <p class="mt-5 border-t border-slate-200 pt-4 text-center text-sm text-slate-500">
+        Already activated? <a class="font-semibold text-brand-700 hover:underline" href="/login">Sign in</a>
+      </p>
+    </div>
+  </div>
+</MobileLayout>

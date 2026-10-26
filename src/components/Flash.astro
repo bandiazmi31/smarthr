@@ -1,0 +1,82 @@
+---
+/**
+ * Renders the one-shot banner carried in the query string after a redirect
+ * (?ok=... / ?error=...), so POST handlers can report back without session state.
+ */
+const params = Astro.url.searchParams;
+const ok = params.get('ok');
+const error = params.get('error');
+
+const messages: Record<string, string> = {
+  created: 'Employee record created.',
+  updated: 'Employee record updated.',
+  deactivated: 'Employee deactivated. The record is kept for the audit trail.',
+  reactivated: 'Employee reactivated.',
+  uploaded: 'Document uploaded to the archive.',
+  department_created: 'Department created.',
+  department_updated: 'Department updated.',
+  department_deleted: 'Department deleted.',
+  department_not_found: 'That department could not be found.',
+  settings_saved: 'Attendance settings saved.',
+  roster_published: 'Roster published.',
+  roster_unchanged: 'No changes to publish.',
+  clocked_in: 'Clocked in. Have a good shift.',
+  clocked_in_late: 'Clocked in late.',
+  clocked_out: 'Clocked out.',
+  clocked_out_offsite: 'Clocked out away from the hotel; flagged for review.',
+  swap_requested: 'Swap request sent to your colleague.',
+  swap_accepted: 'Accepted. Sent to your head of department for approval.',
+  swap_declined: 'Request declined.',
+  swap_cancelled: 'Request withdrawn.',
+  swap_approved: 'Swap approved. The roster has been updated.',
+  swap_rejected: 'Swap rejected.',
+  portal_activated: 'Your portal is active. Welcome.',
+  check_email: 'Check your email to confirm the address, then sign in.',
+  not_permitted: 'You do not have access to that area.',
+  no_matching_employee:
+    'No active employee record matches that email, or portal access has not been enabled yet. Ask your HR team.',
+  doc_deleted: 'Document removed from the archive.',
+  signed_out: 'You have been signed out.',
+  not_authorized: 'That account is not on the HR roster. Ask an administrator to add it.',
+  invalid_credentials: 'Email or password is incorrect.',
+  session_expired: 'Your session expired. Please sign in again.',
+  upload_failed: 'The document could not be uploaded. Check the file type and size.',
+  not_found: 'That employee record could not be found.',
+};
+
+// Some messages carry a number (minutes late, minutes worked, shifts changed).
+const n = params.get('n');
+
+const counted: Record<string, (value: string) => string> = {
+  roster_published: (v) => `Roster published. ${v} shift${v === '1' ? '' : 's'} changed.`,
+  clocked_in_late: (v) => `Clocked in — ${v} minute${v === '1' ? '' : 's'} late.`,
+  clocked_out: (v) => `Clocked out. ${Math.floor(Number(v) / 60)}h ${Number(v) % 60}m recorded.`,
+  clocked_out_offsite: (v) =>
+    `Clocked out away from the hotel. ${Math.floor(Number(v) / 60)}h ${Number(v) % 60}m recorded and flagged for your head of department.`,
+};
+
+const okText = ok
+  ? n && counted[ok]
+    ? counted[ok]!(n)
+    : (messages[ok] ?? ok)
+  : null;
+const errorText = error ? (messages[error] ?? error) : null;
+---
+
+{
+  okText && (
+    <div role="status" class="mb-5 flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+      <span aria-hidden="true" class="mt-0.5 font-bold">✓</span>
+      <p>{okText}</p>
+    </div>
+  )
+}
+
+{
+  errorText && (
+    <div role="alert" class="mb-5 flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+      <span aria-hidden="true" class="mt-0.5 font-bold">!</span>
+      <p>{errorText}</p>
+    </div>
+  )
+}

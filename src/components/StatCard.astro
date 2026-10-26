@@ -1,0 +1,40 @@
+---
+interface Props {
+  label: string;
+  value: number | string;
+  hint?: string;
+  tone?: 'neutral' | 'brand' | 'warning' | 'danger';
+  href?: string;
+}
+
+const { label, value, hint, tone = 'neutral', href } = Astro.props;
+
+const tones = {
+  neutral: 'border-slate-200',
+  brand: 'border-brand-200',
+  warning: 'border-amber-300',
+  danger: 'border-rose-300',
+} as const;
+
+const valueTones = {
+  neutral: 'text-slate-900',
+  brand: 'text-brand-700',
+  warning: 'text-amber-700',
+  danger: 'text-rose-700',
+} as const;
+
+const Tag = href ? 'a' : 'div';
+---
+
+<Tag
+  href={href}
+  class:list={[
+    'card border-l-4 px-5 py-4 transition',
+    tones[tone],
+    href && 'hover:shadow-md',
+  ]}
+>
+  <p class="text-xs font-semibold tracking-wide text-slate-500 uppercase">{label}</p>
+  <p class:list={['mt-1 text-3xl font-semibold tabular-nums', valueTones[tone]]}>{value}</p>
+  {hint && <p class="mt-1 text-xs text-slate-500">{hint}</p>}
+</Tag>

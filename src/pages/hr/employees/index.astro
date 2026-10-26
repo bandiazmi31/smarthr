@@ -1,0 +1,333 @@
+---
+import AppLayout from '../../../layouts/AppLayout.astro';
+import Flash from '../../../components/Flash.astro';
+import StatCard from '../../../components/StatCard.astro';
+import AlertBadge from '../../../components/AlertBadge.astro';
+import StatusPill from '../../../components/StatusPill.astro';
+import { CONTRACT_ALERT_WINDOW_DAYS, EMPLOYMENT_STATUSES, EMPLOYMENT_STATUS_LABELS } from '../../../lib/constants';
+import { formatDate, initials } from '../../../lib/format';
+import { applyFilters, filterHref, parseFilters } from '../../../lib/query';
+import type { ContractStatusRow } from '../../../types/database';
+
+const { supabase } = Astro.locals;
+const url = Astro.url;
+const filters = parseFilters(url);
+
+const from = (filters.page - 1) * filters.perPage;
+const to = from + filters.perPage - 1;
+
+const listQuery = applyFilters(
+  supabase.from('employee_contract_status').select('*', { count: 'exact' }),
+  filters,
+)
+  .order('is_active', { ascending: false })
+  .order('full_name', { ascending: true })
+  .range(from, to);
+
+const [listResult, activeCount, alumniCount, attentionResult, departmentRows] =
+  await Promise.all([
+    listQuery,
+    supabase.from('employees').select('id', { count: 'exact', head: true }).eq('is_active', true),
+    supabase.from('employees').select('id', { count: 'exact', head: true }).eq('is_active', false),
+    supabase
+      .from('employee_contract_status')
+      .select('*')
+      .eq('is_active', true)
+      .in('alert_level', ['expired', 'critical', 'warning'])
+      .order('end_date', { ascending: true }),
+    supabase.from('departments').select('id, name').order('name', { ascending: true }),
+  ]);
+
+const employees = (listResult.data ?? []) as ContractStatusRow[];
+const total = listResult.count ?? 0;
+const totalPages = Math.max(1, Math.ceil(total / filters.perPage));
+
+const attention = (attentionResult.data ?? []) as ContractStatusRow[];
+const expiredCount = attention.filter((row) => row.alert_level === 'expired').length;
+const expiringCount = attention.length - expiredCount;
+
+const departments = departmentRows.data ?? [];
+
+const loadError = listResult.error?.message ?? attentionResult.error?.message ?? null;
+
+const exportHref = (() => {
+  const params = new URLSearchParams(url.search);
+  params.delete('page');
+  const query = params.toString();
+  return query ? `/api/employees/export-csv?${query}` : '/api/employees/export-csv';
+})();
+
+const statusTabs = [
+  { key: 'active', label: 'Active' },
+  { key: 'inactive', label: 'Alumni' },
+  { key: 'all', label: 'All' },
+] as const;
+---
+
+<AppLayout
+  title="Employees"
+  heading="Employee directory"
+  description="Central register of active staff and alumni."
+>
+  <Flash />
+
+  {
+    loadError && (
+      <div role="alert" class="mb-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+        Could not load employee data: {loadError}
+      </div>
+    )
+  }
+
+  <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <StatCard label="Active employees" value={activeCount.count ?? 0} tone="brand" href="/hr/employees" />
+    <StatCard
+      label={`Expiring in ${CONTRACT_ALERT_WINDOW_DAYS}d`}
+      value={expiringCount}
+      tone="warning"
+      hint="Needs a renewal decision"
+      href={filterHref(url, { status: 'active', alert: 'expiring' })}
+    />
+    <StatCard
+      label="Already expired"
+      value={expiredCount}
+      tone="danger"
+      hint="Still marked active"
+      href={filterHref(url, { status: 'active', alert: 'expired' })}
+    />
+    <StatCard label="Alumni on record" value={alumniCount.count ?? 0} hint="Retained for audit" href={filterHref(url, { status: 'inactive', alert: null })} />
+  </div>
+
+  {
+    attention.length > 0 && (
+      <section class="card mt-6 overflow-hidden">
+        <header class="flex items-center justify-between gap-4 border-b border-slate-200 bg-amber-50 px-5 py-3">
+          <div>
+            <h2 class="text-sm font-semibold text-amber-900">Contract alerts</h2>
+            <p class="text-xs text-amber-800">
+              {attention.length} active contract{attention.length === 1 ? '' : 's'} expired or
+              expiring within {CONTRACT_ALERT_WINDOW_DAYS} days.
+            </p>
+          </div>
+          <a class="btn-secondary" href={filterHref(url, { status: 'active', alert: 'attention' })}>
+            View all
+          </a>
+        </header>
+        <ul class="divide-y divide-slate-100">
+          {
+            attention.slice(0, 6).map((row) => (
+              <li class="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                <div class="min-w-0">
+                  <a
+                    href={`/hr/employees/edit/${row.id}`}
+                    class="text-sm font-semibold text-slate-900 hover:text-brand-700 hover:underline"
+                  >
+                    {row.full_name}
+                  </a>
+                  <p class="text-xs text-slate-500">
+                    {row.employee_id} · {row.job_title}, {row.department} · ends {formatDate(row.end_date)}
+                  </p>
+                </div>
+                <AlertBadge level={row.alert_level} daysRemaining={row.days_remaining} />
+              </li>
+            ))
+          }
+        </ul>
+      </section>
+    )
+  }
+
+  <section class="card mt-6 overflow-hidden">
+    <header class="border-b border-slate-200 px-5 py-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <nav class="flex gap-1 rounded-lg bg-slate-100 p-1" aria-label="Employment state">
+          {
+            statusTabs.map((tab) => (
+              <a
+                href={filterHref(url, { status: tab.key })}
+                aria-current={filters.status === tab.key ? 'page' : undefined}
+                class:list={[
+                  'rounded-md px-3 py-1.5 text-sm font-medium transition',
+                  filters.status === tab.key
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900',
+                ]}
+              >
+                {tab.label}
+              </a>
+            ))
+          }
+        </nav>
+
+        <div class="flex items-center gap-2">
+          <a class="btn-secondary" href={exportHref}>Export CSV</a>
+          <a class="btn-primary" href="/hr/employees/create">Add employee</a>
+        </div>
+      </div>
+
+      <form method="get" class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_auto_auto_auto_auto]">
+        <input type="hidden" name="status" value={filters.status} />
+
+        <div>
+          <label class="sr-only" for="q">Search</label>
+          <input
+            class="field-input"
+            id="q"
+            name="q"
+            type="search"
+            value={filters.search}
+            placeholder="Search name, staff number, job title…"
+          />
+        </div>
+
+        <div>
+          <label class="sr-only" for="department">Department</label>
+          <select class="field-input" id="department" name="department">
+            <option value="">All departments</option>
+            {
+              departments.map((d) => (
+                <option value={d.id} selected={filters.department === d.id}>{d.name}</option>
+              ))
+            }
+          </select>
+        </div>
+
+        <div>
+          <label class="sr-only" for="employment">Employment type</label>
+          <select class="field-input" id="employment" name="employment">
+            <option value="">All types</option>
+            {
+              EMPLOYMENT_STATUSES.map((status) => (
+                <option value={status} selected={filters.employment === status}>
+                  {EMPLOYMENT_STATUS_LABELS[status]}
+                </option>
+              ))
+            }
+          </select>
+        </div>
+
+        <div>
+          <label class="sr-only" for="alert">Contract alert</label>
+          <select class="field-input" id="alert" name="alert">
+            <option value="">Any contract state</option>
+            <option value="attention" selected={filters.alert === 'attention'}>Needs attention</option>
+            <option value="expiring" selected={filters.alert === 'expiring'}>Expiring ≤ 30 days</option>
+            <option value="expired" selected={filters.alert === 'expired'}>Expired</option>
+          </select>
+        </div>
+
+        <div class="flex gap-2">
+          <button type="submit" class="btn-primary">Filter</button>
+          <a href="/hr/employees" class="btn-secondary">Reset</a>
+        </div>
+      </form>
+    </header>
+
+    {
+      employees.length === 0 ? (
+        <div class="px-5 py-16 text-center">
+          <p class="text-sm font-medium text-slate-900">No employees match these filters.</p>
+          <p class="mt-1 text-sm text-slate-500">Adjust the search, or add the first record.</p>
+          <a class="btn-primary mt-4" href="/hr/employees/create">Add employee</a>
+        </div>
+      ) : (
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-slate-50 text-xs tracking-wide text-slate-500 uppercase">
+              <tr>
+                <th scope="col" class="px-5 py-3 font-semibold">Employee</th>
+                <th scope="col" class="px-5 py-3 font-semibold">Role</th>
+                <th scope="col" class="px-5 py-3 font-semibold">Type</th>
+                <th scope="col" class="px-5 py-3 font-semibold">Joined</th>
+                <th scope="col" class="px-5 py-3 font-semibold">Contract</th>
+                <th scope="col" class="px-5 py-3 font-semibold">State</th>
+                <th scope="col" class="px-5 py-3 text-right font-semibold">
+                  <span class="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              {
+                employees.map((row) => (
+                  <tr class="hover:bg-slate-50/75">
+                    <td class="px-5 py-3">
+                      <div class="flex items-center gap-3">
+                        <span class="grid size-9 shrink-0 place-items-center rounded-full bg-brand-50 text-xs font-bold text-brand-700">
+                          {initials(row.full_name)}
+                        </span>
+                        <div class="min-w-0">
+                          <a
+                            href={`/hr/employees/edit/${row.id}`}
+                            class="font-semibold text-slate-900 hover:text-brand-700 hover:underline"
+                          >
+                            {row.full_name}
+                          </a>
+                          <p class="text-xs text-slate-500">{row.employee_id}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td class="px-5 py-3">
+                      <p class="text-slate-900">{row.job_title}</p>
+                      <p class="text-xs text-slate-500">{row.department}</p>
+                    </td>
+                    <td class="px-5 py-3 text-slate-600">{row.employment_status}</td>
+                    <td class="px-5 py-3 whitespace-nowrap text-slate-600">{formatDate(row.join_date)}</td>
+                    <td class="px-5 py-3">
+                      <p class="whitespace-nowrap text-slate-600">{formatDate(row.end_date)}</p>
+                      {row.is_active && (
+                        <div class="mt-1">
+                          <AlertBadge level={row.alert_level} daysRemaining={row.days_remaining} />
+                        </div>
+                      )}
+                    </td>
+                    <td class="px-5 py-3"><StatusPill isActive={row.is_active} /></td>
+                    <td class="px-5 py-3 text-right">
+                      <a
+                        href={`/hr/employees/edit/${row.id}`}
+                        class="text-sm font-semibold text-brand-700 hover:underline"
+                      >
+                        Open
+                      </a>
+                    </td>
+                  </tr>
+                ))
+              }
+            </tbody>
+          </table>
+        </div>
+      )
+    }
+
+    {
+      total > 0 && (
+        <footer class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-3 text-sm text-slate-600">
+          <p>
+            Showing <strong>{from + 1}</strong>–<strong>{Math.min(from + employees.length, total)}</strong> of{' '}
+            <strong>{total}</strong>
+          </p>
+          {
+            totalPages > 1 && (
+              <div class="flex items-center gap-2">
+                <a
+                  class:list={['btn-secondary', filters.page <= 1 && 'pointer-events-none opacity-50']}
+                  href={filterHref(url, { page: filters.page - 1 })}
+                  aria-disabled={filters.page <= 1}
+                >
+                  Previous
+                </a>
+                <span class="tabular-nums">Page {filters.page} of {totalPages}</span>
+                <a
+                  class:list={['btn-secondary', filters.page >= totalPages && 'pointer-events-none opacity-50']}
+                  href={filterHref(url, { page: filters.page + 1 })}
+                  aria-disabled={filters.page >= totalPages}
+                >
+                  Next
+                </a>
+              </div>
+            )
+          }
+        </footer>
+      )
+    }
+  </section>
+</AppLayout>

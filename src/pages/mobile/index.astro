@@ -1,0 +1,209 @@
+---
+import MobileLayout from '../../layouts/MobileLayout.astro';
+import Flash from '../../components/Flash.astro';
+import {
+  addDays,
+  formatDayLabel,
+  formatMinutes,
+  formatTimeIn,
+  todayIn,
+  trimSeconds,
+  weekDates,
+  weekStart,
+} from '../../lib/datetime';
+import type { HotelSettingsRow, RosterDetailRow } from '../../types/database';
+
+const { supabase, actor } = Astro.locals;
+const employee = actor.employee!;
+
+const { data: settings } = await supabase.from('hotel_settings').select('*').eq('id', true).maybeSingle();
+const timeZone = (settings as HotelSettingsRow | null)?.timezone ?? 'UTC';
+
+const today = todayIn(timeZone);
+const monday = weekStart(today);
+const dates = weekDates(monday);
+
+const { data, error } = await supabase
+  .from('roster_details')
+  .select('*')
+  .eq('employee_id', employee.id)
+  // Yesterday is included so a night shift that began yesterday is still reachable.
+  .gte('shift_date', addDays(monday, -1))
+  .lte('shift_date', dates[6]!)
+  .order('shift_date', { ascending: true });
+
+const shifts = (data ?? []) as RosterDetailRow[];
+
+// The shift to act on: whatever is in progress, else today's, else the next one.
+const inProgress = shifts.find((s) => s.status === 'in_progress');
+const todays = shifts.find((s) => s.shift_date === today);
+const upcoming = shifts.find((s) => s.shift_date > today && s.status === 'scheduled');
+const current = inProgress ?? todays ?? upcoming ?? null;
+
+const weekShifts = shifts.filter((s) => s.shift_date >= monday);
+const completed = weekShifts.filter((s) => s.status === 'completed');
+const workedMinutes = completed.reduce((sum, s) => sum + (s.worked_minutes ?? 0), 0);
+const lateCount = weekShifts.filter((s) => s.is_late).length;
+
+const { count: pendingSwaps } = await supabase
+  .from('shift_swap_details')
+  .select('id', { count: 'exact', head: true })
+  .eq('target_employee_id', employee.id)
+  .eq('status', 'pending_target');
+
+const statusStyles: Record<string, string> = {
+  scheduled: 'bg-slate-100 text-slate-700',
+  in_progress: 'bg-emerald-100 text-emerald-800',
+  completed: 'bg-brand-50 text-brand-700',
+  absent: 'bg-rose-100 text-rose-800',
+};
+---
+
+<MobileLayout
+  title="Today"
+  heading={`Hello, ${employee.full_name.split(' ')[0]}`}
+  subheading={`${employee.job_title} · ${employee.department_name}`}
+>
+  <Flash />
+
+  {
+    error && (
+      <div role="alert" class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+        Could not load your schedule: {error.message}
+      </div>
+    )
+  }
+
+  <section class="card overflow-hidden">
+    <header class="border-b border-slate-200 px-4 py-3">
+      <h2 class="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+        {inProgress ? 'On shift now' : todays ? 'Today' : 'Next shift'}
+      </h2>
+    </header>
+
+    {
+      current ? (
+        <div class="px-4 py-4">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <p class="text-2xl font-semibold text-slate-900">{current.shift_name}</p>
+              <p class="mt-1 text-sm text-slate-600">
+                {formatDayLabel(current.shift_date)} ·{' '}
+                {trimSeconds(current.start_time)}–{trimSeconds(current.end_time)}
+                {current.is_overnight && <span class="text-amber-700"> (ends next day)</span>}
+              </p>
+            </div>
+            <span class:list={['pill', statusStyles[current.status]]}>
+              {current.status.replace('_', ' ')}
+            </span>
+          </div>
+
+          <dl class="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <div class="rounded-lg bg-slate-50 px-3 py-2">
+              <dt class="text-xs text-slate-500">Clocked in</dt>
+              <dd class="mt-0.5 font-semibold text-slate-900 tabular-nums">
+                {formatTimeIn(current.clock_in_time, timeZone)}
+                {current.is_late && <span class="ml-1 text-xs font-medium text-rose-600">late</span>}
+              </dd>
+            </div>
+            <div class="rounded-lg bg-slate-50 px-3 py-2">
+              <dt class="text-xs text-slate-500">Clocked out</dt>
+              <dd class="mt-0.5 font-semibold text-slate-900 tabular-nums">
+                {formatTimeIn(current.clock_out_time, timeZone)}
+              </dd>
+            </div>
+          </dl>
+
+          {
+            current.status !== 'completed' && (
+              <a class="btn-primary mt-4 w-full" href="/mobile/clock-in">
+                {current.status === 'in_progress' ? 'Clock out' : 'Clock in'}
+              </a>
+            )
+          }
+        </div>
+      ) : (
+        <p class="px-4 py-10 text-center text-sm text-slate-500">
+          Nothing scheduled right now. Your head of department publishes the roster each week.
+        </p>
+      )
+    }
+  </section>
+
+  {
+    (pendingSwaps ?? 0) > 0 && (
+      <a
+        href="/mobile/swaps"
+        class="card mt-4 flex items-center justify-between gap-3 border-amber-300 px-4 py-3"
+      >
+        <div>
+          <p class="text-sm font-semibold text-amber-900">
+            {pendingSwaps} swap request{pendingSwaps === 1 ? '' : 's'} waiting
+          </p>
+          <p class="text-xs text-amber-800">A colleague is asking to trade a shift with you.</p>
+        </div>
+        <span aria-hidden="true" class="text-amber-700">→</span>
+      </a>
+    )
+  }
+
+  <section class="mt-4 grid grid-cols-3 gap-3">
+    <div class="card px-3 py-3 text-center">
+      <p class="text-xs text-slate-500">Shifts</p>
+      <p class="mt-0.5 text-xl font-semibold text-slate-900 tabular-nums">{weekShifts.length}</p>
+    </div>
+    <div class="card px-3 py-3 text-center">
+      <p class="text-xs text-slate-500">Worked</p>
+      <p class="mt-0.5 text-xl font-semibold text-slate-900 tabular-nums">
+        {formatMinutes(workedMinutes)}
+      </p>
+    </div>
+    <div class="card px-3 py-3 text-center">
+      <p class="text-xs text-slate-500">Late</p>
+      <p
+        class:list={[
+          'mt-0.5 text-xl font-semibold tabular-nums',
+          lateCount > 0 ? 'text-rose-600' : 'text-slate-900',
+        ]}
+      >
+        {lateCount}
+      </p>
+    </div>
+  </section>
+
+  <section class="card mt-4 overflow-hidden">
+    <header class="border-b border-slate-200 px-4 py-3">
+      <h2 class="text-xs font-semibold tracking-wide text-slate-500 uppercase">This week</h2>
+    </header>
+
+    <ul class="divide-y divide-slate-100">
+      {
+        dates.map((date) => {
+          const shift = weekShifts.find((s) => s.shift_date === date);
+          return (
+            <li
+              class:list={[
+                'flex items-center justify-between gap-3 px-4 py-3',
+                date === today && 'bg-brand-50/60',
+              ]}
+            >
+              <div>
+                <p class="text-sm font-semibold text-slate-900">{formatDayLabel(date)}</p>
+                <p class="text-xs text-slate-500">
+                  {shift
+                    ? `${shift.shift_name} · ${trimSeconds(shift.start_time)}–${trimSeconds(shift.end_time)}`
+                    : 'Off'}
+                </p>
+              </div>
+              {shift ? (
+                <span class:list={['pill', statusStyles[shift.status]]}>{shift.shift_code}</span>
+              ) : (
+                <span class="pill bg-slate-100 text-slate-400">—</span>
+              )}
+            </li>
+          );
+        })
+      }
+    </ul>
+  </section>
+</MobileLayout>

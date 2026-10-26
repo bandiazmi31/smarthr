@@ -1,0 +1,254 @@
+---
+import { EMPLOYMENT_STATUSES, EMPLOYMENT_STATUS_LABELS } from '../lib/constants';
+import type { FieldErrors } from '../lib/employees';
+import type { DepartmentRow, MasterShiftRow } from '../types/database';
+
+interface Props {
+  action: string;
+  /** Raw string values, so a rejected submission comes back exactly as typed. */
+  values: Record<string, string>;
+  errors?: FieldErrors;
+  /** Master data, alphabetical. An empty list disables the form. */
+  departments: Pick<DepartmentRow, 'id' | 'name'>[];
+  /** Active shifts, for the backoffice auto-schedule picker. */
+  shifts?: Pick<MasterShiftRow, 'id' | 'name' | 'code'>[];
+  submitLabel: string;
+  cancelHref: string;
+  /** Present on edit, so the handler knows which row to update. */
+  employeeUuid?: string;
+}
+
+const {
+  action,
+  values,
+  errors = {},
+  departments,
+  shifts = [],
+  submitLabel,
+  cancelHref,
+  employeeUuid,
+} = Astro.props;
+
+const v = (key: string) => values[key] ?? '';
+const err = (key: string) => errors[key];
+
+// Without master data there is nothing valid to assign, so don't pretend otherwise.
+const noDepartments = departments.length === 0;
+---
+
+{
+  noDepartments && (
+    <div role="alert" class="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      No departments have been set up yet, and every employee needs one.{' '}
+      <a class="font-semibold underline" href="/hr/departments">Create a department first</a>.
+    </div>
+  )
+}
+
+<form method="post" action={action} class="space-y-6" novalidate>
+  {employeeUuid && <input type="hidden" name="id" value={employeeUuid} />}
+
+  <section class="card p-6">
+    <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">Identity</h2>
+    <div class="mt-4 grid gap-5 sm:grid-cols-2">
+      <div>
+        <label class="field-label" for="employee_id">Staff number <span class="text-rose-500">*</span></label>
+        <input
+          class="field-input"
+          id="employee_id"
+          name="employee_id"
+          value={v('employee_id')}
+          placeholder="e.g. HTL-0241"
+          autocomplete="off"
+          required
+        />
+        {err('employee_id') ? <p class="field-error">{err('employee_id')}</p> : <p class="field-hint">Internal hotel ID. Must be unique.</p>}
+      </div>
+
+      <div>
+        <label class="field-label" for="full_name">Full name <span class="text-rose-500">*</span></label>
+        <input class="field-input" id="full_name" name="full_name" value={v('full_name')} required />
+        {err('full_name') && <p class="field-error">{err('full_name')}</p>}
+      </div>
+
+      <div>
+        <label class="field-label" for="national_id">National ID (NIK / passport)</label>
+        <input class="field-input" id="national_id" name="national_id" value={v('national_id')} autocomplete="off" />
+        {err('national_id') && <p class="field-error">{err('national_id')}</p>}
+      </div>
+
+      <div>
+        <label class="field-label" for="birth_date">Date of birth</label>
+        <input class="field-input" id="birth_date" name="birth_date" type="date" value={v('birth_date')} />
+        {err('birth_date') && <p class="field-error">{err('birth_date')}</p>}
+      </div>
+
+      <div>
+        <label class="field-label" for="phone">Phone</label>
+        <input class="field-input" id="phone" name="phone" value={v('phone')} placeholder="+62 ..." />
+        {err('phone') && <p class="field-error">{err('phone')}</p>}
+      </div>
+
+      <div>
+        <label class="field-label" for="email">Email</label>
+        <input class="field-input" id="email" name="email" type="email" value={v('email')} />
+        {err('email') && <p class="field-error">{err('email')}</p>}
+      </div>
+
+      <div class="sm:col-span-2">
+        <label class="field-label" for="address">Address</label>
+        <textarea class="field-input" id="address" name="address" rows="2">{v('address')}</textarea>
+      </div>
+    </div>
+  </section>
+
+  <section class="card p-6">
+    <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">Employment</h2>
+    <div class="mt-4 grid gap-5 sm:grid-cols-2">
+      <div>
+        <label class="field-label" for="department_id">Department <span class="text-rose-500">*</span></label>
+        <select class="field-input" id="department_id" name="department_id" required disabled={noDepartments}>
+          <option value="" disabled selected={!v('department_id')}>Select…</option>
+          {
+            departments.map((d) => (
+              <option value={d.id} selected={v('department_id') === d.id}>{d.name}</option>
+            ))
+          }
+        </select>
+        {
+          err('department_id')
+            ? <p class="field-error">{err('department_id')}</p>
+            : <p class="field-hint">Managed in <a class="underline" href="/hr/departments">Departments</a>.</p>
+        }
+      </div>
+
+      <div>
+        <label class="field-label" for="job_title">Job title <span class="text-rose-500">*</span></label>
+        <input class="field-input" id="job_title" name="job_title" value={v('job_title')} required />
+        {err('job_title') && <p class="field-error">{err('job_title')}</p>}
+      </div>
+
+      <div>
+        <label class="field-label" for="employment_status">Employment status <span class="text-rose-500">*</span></label>
+        <select class="field-input" id="employment_status" name="employment_status" required>
+          <option value="" disabled selected={!v('employment_status')}>Select…</option>
+          {
+            EMPLOYMENT_STATUSES.map((status) => (
+              <option value={status} selected={v('employment_status') === status}>
+                {EMPLOYMENT_STATUS_LABELS[status]}
+              </option>
+            ))
+          }
+        </select>
+        {err('employment_status') && <p class="field-error">{err('employment_status')}</p>}
+      </div>
+
+      <div>
+        <label class="field-label" for="join_date">Join date <span class="text-rose-500">*</span></label>
+        <input class="field-input" id="join_date" name="join_date" type="date" value={v('join_date')} required />
+        {err('join_date') && <p class="field-error">{err('join_date')}</p>}
+      </div>
+
+      <div>
+        <label class="field-label" for="end_date">
+          Contract end date<span class="text-rose-500" data-end-date-required hidden> *</span>
+        </label>
+        <input class="field-input" id="end_date" name="end_date" type="date" value={v('end_date')} />
+        {
+          err('end_date')
+            ? <p class="field-error">{err('end_date')}</p>
+            : <p class="field-hint">Required for PKWT. Drives the 30-day renewal alert.</p>
+        }
+      </div>
+
+      <div class="sm:col-span-2">
+        <label class="field-label" for="notes">Internal notes</label>
+        <textarea class="field-input" id="notes" name="notes" rows="3">{v('notes')}</textarea>
+      </div>
+    </div>
+  </section>
+
+  <section class="card p-6">
+    <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">Portal access</h2>
+    <p class="mt-1 text-sm text-slate-500">
+      Controls the mobile staff portal: viewing shifts, clocking in, and swapping shifts.
+    </p>
+
+    <div class="mt-4 space-y-5">
+      <div>
+        <label class="flex items-start gap-3">
+          <input
+            class="mt-0.5 size-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500/30"
+            type="checkbox"
+            name="portal_enabled"
+            checked={v('portal_enabled') === 'on'}
+          />
+          <span>
+            <span class="text-sm font-medium text-slate-700">Allow portal sign-up</span>
+            <span class="mt-0.5 block text-xs text-slate-500">
+              The employee activates their own account at <code>/mobile/register</code> using the
+              email on this record. Until then nothing is shared.
+            </span>
+          </span>
+        </label>
+        {err('portal_enabled') && <p class="field-error">{err('portal_enabled')}</p>}
+      </div>
+
+      <div class="grid gap-5 sm:grid-cols-2">
+        <div>
+          <label class="field-label" for="role">Portal role</label>
+          <select class="field-input" id="role" name="role">
+            <option value="employee" selected={v('role') !== 'hod'}>Employee</option>
+            <option value="hod" selected={v('role') === 'hod'}>Head of department</option>
+          </select>
+          {
+            err('role')
+              ? <p class="field-error">{err('role')}</p>
+              : <p class="field-hint">A HOD rosters and approves swaps for their own department.</p>
+          }
+        </div>
+
+        <div>
+          <label class="field-label" for="auto_schedule_shift_id">Auto-schedule (backoffice)</label>
+          <select class="field-input" id="auto_schedule_shift_id" name="auto_schedule_shift_id">
+            <option value="" selected={!v('auto_schedule_shift_id')}>Not auto-scheduled</option>
+            {
+              shifts.map((s) => (
+                <option value={s.id} selected={v('auto_schedule_shift_id') === s.id}>
+                  {s.name} ({s.code})
+                </option>
+              ))
+            }
+          </select>
+          {
+            err('auto_schedule_shift_id')
+              ? <p class="field-error">{err('auto_schedule_shift_id')}</p>
+              : <p class="field-hint">Rostered Mon–Fri automatically each Sunday.</p>
+          }
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="flex items-center justify-end gap-3">
+    <a href={cancelHref} class="btn-secondary">Cancel</a>
+    <button type="submit" class="btn-primary" disabled={noDepartments}>{submitLabel}</button>
+  </div>
+</form>
+
+<script>
+  // Mirror the PKWT end-date rule in the browser. The server validates regardless.
+  const status = document.querySelector<HTMLSelectElement>('#employment_status');
+  const endDate = document.querySelector<HTMLInputElement>('#end_date');
+  const marker = document.querySelector<HTMLElement>('[data-end-date-required]');
+
+  function sync() {
+    if (!status || !endDate || !marker) return;
+    const required = status.value === 'PKWT';
+    endDate.required = required;
+    marker.hidden = !required;
+  }
+
+  status?.addEventListener('change', sync);
+  sync();
+</script>

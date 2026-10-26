@@ -1,0 +1,249 @@
+---
+import MobileLayout from '../../layouts/MobileLayout.astro';
+import Flash from '../../components/Flash.astro';
+import { formatDayLabel, todayIn, trimSeconds } from '../../lib/datetime';
+import type {
+  HotelSettingsRow,
+  RosterDetailRow,
+  ShiftSwapDetailRow,
+  SwappableShiftRow,
+} from '../../types/database';
+
+const { supabase, actor } = Astro.locals;
+const employee = actor.employee!;
+
+const { data: settings } = await supabase.from('hotel_settings').select('*').eq('id', true).maybeSingle();
+const timeZone = (settings as HotelSettingsRow | null)?.timezone ?? 'UTC';
+const today = todayIn(timeZone);
+
+// Colleagues' shifts and the other side of a swap belong to employees this user
+// cannot read directly, so both come from SECURITY DEFINER functions that expose
+// only the handful of columns these screens need.
+const [mineResult, colleaguesResult, swapsResult] = await Promise.all([
+  // Only a future, untouched shift can be offered.
+  supabase
+    .from('roster_details')
+    .select('*')
+    .eq('employee_id', employee.id)
+    .eq('status', 'scheduled')
+    .gt('shift_date', today)
+    .order('shift_date', { ascending: true }),
+  supabase.rpc('swappable_shifts'),
+  supabase.rpc('my_shift_swaps'),
+]);
+
+const myShifts = (mineResult.data ?? []) as RosterDetailRow[];
+const colleagueShifts = (colleaguesResult.data ?? []) as SwappableShiftRow[];
+const swaps = ((swapsResult.data ?? []) as ShiftSwapDetailRow[]).slice(0, 40);
+
+const incoming = swaps.filter(
+  (s) => s.target_employee_id === employee.id && s.status === 'pending_target',
+);
+const outgoing = swaps.filter(
+  (s) => s.requester_employee_id === employee.id && ['pending_target', 'pending_hod'].includes(s.status),
+);
+const toApprove = actor.isHod ? swaps.filter((s) => s.status === 'pending_hod') : [];
+const history = swaps.filter((s) => ['approved', 'rejected', 'cancelled'].includes(s.status));
+
+const statusStyles: Record<string, string> = {
+  pending_target: 'bg-amber-100 text-amber-800',
+  pending_hod: 'bg-brand-50 text-brand-700',
+  approved: 'bg-emerald-100 text-emerald-800',
+  rejected: 'bg-rose-100 text-rose-800',
+  cancelled: 'bg-slate-100 text-slate-600',
+};
+
+const statusLabels: Record<string, string> = {
+  pending_target: 'Awaiting colleague',
+  pending_hod: 'Awaiting HOD',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  cancelled: 'Withdrawn',
+};
+
+const describe = (s: ShiftSwapDetailRow) =>
+  `${s.requester_name} · ${formatDayLabel(s.requester_shift_date)} ${s.requester_shift_code}` +
+  ` ⇄ ${s.target_name} · ${formatDayLabel(s.target_shift_date)} ${s.target_shift_code}`;
+---
+
+<MobileLayout title="Swaps" heading="Shift swaps" subheading={employee.department_name}>
+  <Flash />
+
+  {
+    incoming.length > 0 && (
+      <section class="card mb-4 overflow-hidden border-amber-300">
+        <header class="border-b border-amber-200 bg-amber-50 px-4 py-3">
+          <h2 class="text-xs font-semibold tracking-wide text-amber-900 uppercase">
+            Asked of you ({incoming.length})
+          </h2>
+        </header>
+        <ul class="divide-y divide-slate-100">
+          {incoming.map((s) => (
+            <li class="px-4 py-3">
+              <p class="text-sm font-semibold text-slate-900">
+                {s.requester_name} wants your {formatDayLabel(s.target_shift_date)} shift
+              </p>
+              <p class="mt-1 text-xs text-slate-600">
+                You take {s.requester_shift_name} on {formatDayLabel(s.requester_shift_date)} ·
+                they take {s.target_shift_name} on {formatDayLabel(s.target_shift_date)}
+              </p>
+              {s.reason && <p class="mt-1 text-xs text-slate-500 italic">“{s.reason}”</p>}
+
+              <div class="mt-3 flex gap-2">
+                <form method="post" action="/api/swaps/respond" class="flex-1">
+                  <input type="hidden" name="id" value={s.id} />
+                  <input type="hidden" name="decision" value="accept" />
+                  <button type="submit" class="btn-primary w-full">Accept</button>
+                </form>
+                <form method="post" action="/api/swaps/respond" class="flex-1">
+                  <input type="hidden" name="id" value={s.id} />
+                  <input type="hidden" name="decision" value="decline" />
+                  <button type="submit" class="btn-secondary w-full">Decline</button>
+                </form>
+              </div>
+              <p class="mt-2 text-xs text-slate-500">
+                Accepting sends it to your head of department for final approval.
+              </p>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )
+  }
+
+  {
+    toApprove.length > 0 && (
+      <section class="card mb-4 overflow-hidden border-brand-200">
+        <header class="border-b border-brand-100 bg-brand-50 px-4 py-3">
+          <h2 class="text-xs font-semibold tracking-wide text-brand-900 uppercase">
+            Your approval ({toApprove.length})
+          </h2>
+        </header>
+        <ul class="divide-y divide-slate-100">
+          {toApprove.map((s) => (
+            <li class="px-4 py-3">
+              <p class="text-sm font-semibold text-slate-900">{describe(s)}</p>
+              <p class="mt-1 text-xs text-slate-600">Both staff have agreed.</p>
+              <div class="mt-3 flex gap-2">
+                <form method="post" action="/api/swaps/approve" class="flex-1">
+                  <input type="hidden" name="id" value={s.id} />
+                  <input type="hidden" name="decision" value="approve" />
+                  <button type="submit" class="btn-primary w-full">Approve</button>
+                </form>
+                <form method="post" action="/api/swaps/approve" class="flex-1">
+                  <input type="hidden" name="id" value={s.id} />
+                  <input type="hidden" name="decision" value="reject" />
+                  <button type="submit" class="btn-secondary w-full">Reject</button>
+                </form>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )
+  }
+
+  <section class="card overflow-hidden">
+    <header class="border-b border-slate-200 px-4 py-3">
+      <h2 class="text-xs font-semibold tracking-wide text-slate-500 uppercase">Request a swap</h2>
+    </header>
+
+    {
+      myShifts.length === 0 || colleagueShifts.length === 0 ? (
+        <p class="px-4 py-8 text-center text-sm text-slate-500">
+          {myShifts.length === 0
+            ? 'You have no upcoming shifts to offer.'
+            : 'No colleague in your department has an upcoming shift to trade.'}
+        </p>
+      ) : (
+        <form method="post" action="/api/swaps/request" class="space-y-4 px-4 py-4">
+          <div>
+            <label class="field-label" for="requester_roster_id">Your shift</label>
+            <select class="field-input" id="requester_roster_id" name="requester_roster_id" required>
+              {myShifts.map((s) => (
+                <option value={s.id}>
+                  {formatDayLabel(s.shift_date)} · {s.shift_name} {trimSeconds(s.start_time)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label class="field-label" for="target_roster_id">Swap with</label>
+            <select class="field-input" id="target_roster_id" name="target_roster_id" required>
+              {colleagueShifts.map((s) => (
+                <option value={s.roster_id}>
+                  {s.full_name} · {formatDayLabel(s.shift_date)} {s.shift_name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label class="field-label" for="reason">Reason (optional)</label>
+            <input class="field-input" id="reason" name="reason" maxlength="200" />
+          </div>
+
+          <button type="submit" class="btn-primary w-full">Send request</button>
+        </form>
+      )
+    }
+  </section>
+
+  {
+    outgoing.length > 0 && (
+      <section class="card mt-4 overflow-hidden">
+        <header class="border-b border-slate-200 px-4 py-3">
+          <h2 class="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+            Your open requests
+          </h2>
+        </header>
+        <ul class="divide-y divide-slate-100">
+          {outgoing.map((s) => (
+            <li class="flex items-start justify-between gap-3 px-4 py-3">
+              <div class="min-w-0">
+                <p class="text-sm font-semibold text-slate-900">
+                  With {s.target_name}, {formatDayLabel(s.target_shift_date)}
+                </p>
+                <p class="mt-0.5 text-xs text-slate-500">{statusLabels[s.status]}</p>
+                <form method="post" action="/api/swaps/respond" class="mt-2">
+                  <input type="hidden" name="id" value={s.id} />
+                  <input type="hidden" name="decision" value="cancel" />
+                  <button type="submit" class="text-xs font-semibold text-rose-600 hover:underline">
+                    Withdraw
+                  </button>
+                </form>
+              </div>
+              <span class:list={['pill shrink-0', statusStyles[s.status]]}>{s.requester_shift_code}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )
+  }
+
+  {
+    history.length > 0 && (
+      <section class="card mt-4 overflow-hidden">
+        <header class="border-b border-slate-200 px-4 py-3">
+          <h2 class="text-xs font-semibold tracking-wide text-slate-500 uppercase">Recent decisions</h2>
+        </header>
+        <ul class="divide-y divide-slate-100">
+          {history.slice(0, 8).map((s) => (
+            <li class="flex items-start justify-between gap-3 px-4 py-3">
+              <div class="min-w-0">
+                <p class="truncate text-sm text-slate-700">{describe(s)}</p>
+                {s.decision_note && (
+                  <p class="mt-0.5 text-xs text-slate-500 italic">“{s.decision_note}”</p>
+                )}
+              </div>
+              <span class:list={['pill shrink-0', statusStyles[s.status]]}>
+                {statusLabels[s.status]}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )
+  }
+</MobileLayout>

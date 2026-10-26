@@ -1,0 +1,115 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  heading?: string;
+  description?: string;
+}
+
+const { title, heading, description } = Astro.props;
+const actor = Astro.locals.actor;
+const email = actor.email ?? '';
+const pathname = Astro.url.pathname;
+
+const nav = [
+  { href: '/hr/employees', label: 'Employees', match: (p: string) => p === '/hr/employees' },
+  {
+    href: '/hr/employees?status=inactive',
+    label: 'Alumni',
+    match: () => false,
+  },
+  {
+    href: '/hr/employees/create',
+    label: 'Add employee',
+    match: (p: string) => p.startsWith('/hr/employees/create'),
+  },
+  {
+    href: '/hr/departments',
+    label: 'Departments',
+    match: (p: string) => p.startsWith('/hr/departments'),
+  },
+  {
+    href: '/hod/roster',
+    label: 'Rostering',
+    match: (p: string) => p.startsWith('/hod/roster'),
+  },
+  {
+    href: '/hr/settings',
+    label: 'Settings',
+    match: (p: string) => p.startsWith('/hr/settings'),
+  },
+].filter((item) => actor.isHr || item.href.startsWith('/hod/'));
+---
+
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title} · Smart HR</title>
+  </head>
+  <body class="min-h-full">
+    <div class="flex min-h-screen flex-col lg:flex-row">
+      <aside class="shrink-0 bg-brand-900 text-brand-100 lg:w-64">
+        <div class="flex items-center gap-3 px-5 py-5">
+          <span class="grid size-9 place-items-center rounded-lg bg-brand-500 text-sm font-bold text-white">
+            HR
+          </span>
+          <div>
+            <p class="text-sm font-semibold text-white">Smart HR</p>
+            <p class="text-xs text-brand-200">Hotel HRIS · Phase 1</p>
+          </div>
+        </div>
+
+        <nav class="flex gap-1 overflow-x-auto px-3 pb-4 lg:flex-col lg:overflow-visible">
+          {
+            nav.map((item) => (
+              <a
+                href={item.href}
+                aria-current={item.match(pathname) ? 'page' : undefined}
+                class:list={[
+                  'rounded-lg px-3 py-2 text-sm font-medium whitespace-nowrap transition',
+                  item.match(pathname)
+                    ? 'bg-white/15 text-white'
+                    : 'text-brand-100 hover:bg-white/10 hover:text-white',
+                ]}
+              >
+                {item.label}
+              </a>
+            ))
+          }
+        </nav>
+      </aside>
+
+      <div class="flex min-w-0 flex-1 flex-col">
+        <header class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-6 py-4">
+          <div class="min-w-0">
+            <h1 class="truncate text-lg font-semibold text-slate-900">{heading ?? title}</h1>
+            {description && <p class="mt-0.5 text-sm text-slate-500">{description}</p>}
+          </div>
+
+          <div class="flex items-center gap-3">
+            <div class="text-right">
+              <p class="text-sm font-medium text-slate-900">{actor.displayName}</p>
+              <p class="text-xs text-slate-500">{email}</p>
+            </div>
+            <form method="post" action="/api/auth/logout">
+              <button type="submit" class="btn-secondary">Sign out</button>
+            </form>
+          </div>
+        </header>
+
+        <main class="flex-1 px-6 py-6">
+          <slot />
+        </main>
+
+        <footer class="border-t border-slate-200 px-6 py-4 text-xs text-slate-400">
+          Smart HR Phase 1 · employee records are confidential. Sign out when you leave this device.
+        </footer>
+      </div>
+    </div>
+  </body>
+</html>

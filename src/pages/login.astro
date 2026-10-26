@@ -1,0 +1,65 @@
+---
+import AuthLayout from '../layouts/AuthLayout.astro';
+import Flash from '../components/Flash.astro';
+
+// Empty means "let the server pick": HR, HOD and staff each have a different
+// home, and presuming one here bounces the other two through a 'not permitted'.
+const redirectTo = Astro.url.searchParams.get('redirect') ?? '';
+const email = Astro.url.searchParams.get('email') ?? '';
+---
+
+<AuthLayout title="Sign in">
+  <div class="mb-6 text-center">
+    <span class="inline-grid size-12 place-items-center rounded-xl bg-white/15 text-lg font-bold text-white">
+      HR
+    </span>
+    <h1 class="mt-4 text-2xl font-semibold text-white">Smart HR</h1>
+    <p class="mt-1 text-sm text-brand-100">Hotel HRIS · HR team access only</p>
+  </div>
+
+  <div class="card p-6">
+    <Flash />
+
+    <form method="post" action="/api/auth/login" class="space-y-4">
+      <input type="hidden" name="redirect" value={redirectTo} />
+
+      <div>
+        <label class="field-label" for="email">Work email</label>
+        <input
+          class="field-input"
+          id="email"
+          name="email"
+          type="email"
+          value={email}
+          autocomplete="username"
+          required
+          autofocus
+        />
+      </div>
+
+      <div>
+        <label class="field-label" for="password">Password</label>
+        <input
+          class="field-input"
+          id="password"
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          required
+        />
+      </div>
+
+      <button type="submit" class="btn-primary w-full">Sign in</button>
+    </form>
+
+    <p class="mt-5 border-t border-slate-200 pt-4 text-sm text-slate-600">
+      Staff activating the mobile portal for the first time:{' '}
+      <a class="font-semibold text-brand-700 hover:underline" href="/mobile/register">
+        activate your account
+      </a>.
+    </p>
+    <p class="mt-2 text-xs text-slate-500">
+      HR administrator accounts are created by the system administrator.
+    </p>
+  </div>
+</AuthLayout>

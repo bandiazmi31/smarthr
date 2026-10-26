@@ -1,0 +1,25 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title} · Smart HR</title>
+  </head>
+  <body class="flex min-h-full items-center justify-center bg-linear-to-br from-brand-900 via-brand-700 to-slate-900 p-6">
+    <main class="w-full max-w-md">
+      <slot />
+    </main>
+  </body>
+</html>

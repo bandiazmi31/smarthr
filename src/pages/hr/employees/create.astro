@@ -1,0 +1,51 @@
+---
+import AppLayout from '../../../layouts/AppLayout.astro';
+import EmployeeForm from '../../../components/EmployeeForm.astro';
+import Flash from '../../../components/Flash.astro';
+import { takeFormFlash } from '../../../lib/flash';
+
+const { supabase } = Astro.locals;
+
+// A rejected submission is handed back here with the typed values intact.
+const flash = takeFormFlash(Astro.cookies);
+
+const [departmentRows, shiftRows] = await Promise.all([
+  supabase.from('departments').select('id, name').order('name', { ascending: true }),
+  supabase
+    .from('master_shifts')
+    .select('id, name, code')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true }),
+]);
+
+const departments = departmentRows.data ?? [];
+const shifts = shiftRows.data ?? [];
+---
+
+<AppLayout
+  title="Add employee"
+  heading="Add employee"
+  description="Register a new staff member. Documents can be uploaded once the record exists."
+>
+  <div class="mx-auto max-w-4xl">
+    <Flash />
+
+    {
+      flash && Object.keys(flash.errors).length > 0 && (
+        <div role="alert" class="mb-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          Please correct the highlighted fields.
+        </div>
+      )
+    }
+
+    <EmployeeForm
+      action="/api/employees/create"
+      values={flash?.values ?? {}}
+      errors={flash?.errors}
+      departments={departments}
+      shifts={shifts}
+      submitLabel="Create employee"
+      cancelHref="/hr/employees"
+    />
+  </div>
+</AppLayout>

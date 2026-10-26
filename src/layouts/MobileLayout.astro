@@ -1,0 +1,122 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  heading?: string;
+  subheading?: string;
+  /** Hide the bottom bar on standalone screens like registration. */
+  chrome?: boolean;
+}
+
+const { title, heading, subheading, chrome = true } = Astro.props;
+const actor = Astro.locals.actor;
+const pathname = Astro.url.pathname;
+
+const tabs = [
+  { href: '/mobile', label: 'Today', icon: '◴', match: (p: string) => p === '/mobile' },
+  {
+    href: '/mobile/clock-in',
+    label: 'Clock',
+    icon: '◎',
+    match: (p: string) => p.startsWith('/mobile/clock-in'),
+  },
+  {
+    href: '/mobile/swaps',
+    label: 'Swaps',
+    icon: '⇄',
+    match: (p: string) => p.startsWith('/mobile/swaps'),
+  },
+];
+---
+
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#0f2f5e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Smart HR" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <title>{title} · Smart HR</title>
+  </head>
+  <body class="min-h-full bg-slate-100">
+    <div class="mx-auto flex min-h-svh w-full max-w-lg flex-col bg-slate-50 shadow-sm">
+      <header class="sticky top-0 z-20 bg-brand-900 px-5 pt-[max(1rem,env(safe-area-inset-top))] pb-4 text-white">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <h1 class="truncate text-lg font-semibold">{heading ?? title}</h1>
+            {subheading && <p class="mt-0.5 truncate text-sm text-brand-100">{subheading}</p>}
+          </div>
+
+          {
+            actor.employee && (
+              <form method="post" action="/api/auth/logout" class="shrink-0">
+                <button
+                  type="submit"
+                  class="rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/25"
+                >
+                  Sign out
+                </button>
+              </form>
+            )
+          }
+        </div>
+
+        {
+          actor.isHod && (
+            <a
+              href="/hod/roster"
+              class="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/25"
+            >
+              Department rostering →
+            </a>
+          )
+        }
+      </header>
+
+      <main class:list={['flex-1 px-4 py-5', chrome && 'pb-24']}>
+        <slot />
+      </main>
+
+      {
+        chrome && actor.employee && (
+          <nav
+            class="fixed inset-x-0 bottom-0 z-20 mx-auto flex w-full max-w-lg justify-around border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
+            aria-label="Portal sections"
+          >
+            {tabs.map((tab) => (
+              <a
+                href={tab.href}
+                aria-current={tab.match(pathname) ? 'page' : undefined}
+                class:list={[
+                  'flex flex-1 flex-col items-center gap-0.5 py-3 text-xs font-semibold transition',
+                  tab.match(pathname) ? 'text-brand-700' : 'text-slate-500 hover:text-slate-800',
+                ]}
+              >
+                <span aria-hidden="true" class="text-lg leading-none">{tab.icon}</span>
+                {tab.label}
+              </a>
+            ))}
+          </nav>
+        )
+      }
+    </div>
+
+    <script>
+      // Registering the worker is what makes the portal installable; it caches
+      // only the offline shell, never attendance data.
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js', { scope: '/mobile' }).catch(() => {
+            /* A failed registration must never block clocking in. */
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

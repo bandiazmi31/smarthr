@@ -1,0 +1,16 @@
+---
+interface Props {
+  isActive: boolean;
+}
+
+const { isActive } = Astro.props;
+---
+
+<span
+  class:list={[
+    'pill',
+    isActive ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-600',
+  ]}
+>
+  {isActive ? 'Active' : 'Alumni'}
+</span>

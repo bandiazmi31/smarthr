@@ -1,0 +1,40 @@
+---
+import { ALERT_LEVEL_LABELS } from '../lib/constants';
+import { formatCountdown } from '../lib/format';
+import type { AlertLevel } from '../types/database';
+
+interface Props {
+  level: AlertLevel;
+  daysRemaining: number | null;
+  /** Show the countdown alongside the label. */
+  withCountdown?: boolean;
+}
+
+const { level, daysRemaining, withCountdown = true } = Astro.props;
+
+const styles: Record<AlertLevel, string> = {
+  expired: 'bg-rose-100 text-rose-800',
+  critical: 'bg-orange-100 text-orange-800',
+  warning: 'bg-amber-100 text-amber-800',
+  ok: 'bg-emerald-100 text-emerald-800',
+  none: 'bg-slate-100 text-slate-600',
+};
+
+const dots: Record<AlertLevel, string> = {
+  expired: 'bg-rose-500',
+  critical: 'bg-orange-500',
+  warning: 'bg-amber-500',
+  ok: 'bg-emerald-500',
+  none: 'bg-slate-400',
+};
+---
+
+<span class:list={['pill', styles[level]]}>
+  <span class:list={['size-1.5 rounded-full', dots[level]]} aria-hidden="true"></span>
+  {ALERT_LEVEL_LABELS[level]}
+  {
+    withCountdown && level !== 'none' && daysRemaining !== null && (
+      <span class="font-normal opacity-80">· {formatCountdown(daysRemaining)}</span>
+    )
+  }
+</span>

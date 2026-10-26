@@ -1,0 +1,353 @@
+---
+import MobileLayout from '../../layouts/MobileLayout.astro';
+import Flash from '../../components/Flash.astro';
+import {
+  addDays,
+  formatDayLabel,
+  formatTimeIn,
+  todayIn,
+  trimSeconds,
+} from '../../lib/datetime';
+import type { HotelSettingsRow, RosterDetailRow } from '../../types/database';
+
+const { supabase, actor } = Astro.locals;
+const employee = actor.employee!;
+
+const { data: settingsRow } = await supabase
+  .from('hotel_settings')
+  .select('*')
+  .eq('id', true)
+  .maybeSingle();
+
+const settings = settingsRow as HotelSettingsRow | null;
+const timeZone = settings?.timezone ?? 'UTC';
+const today = todayIn(timeZone);
+
+// Yesterday through tomorrow: a night shift started yesterday still needs its
+// clock-out, and a shift starting just after midnight needs its clock-in.
+const { data } = await supabase
+  .from('roster_details')
+  .select('*')
+  .eq('employee_id', employee.id)
+  .gte('shift_date', addDays(today, -1))
+  .lte('shift_date', addDays(today, 1))
+  .in('status', ['scheduled', 'in_progress'])
+  .order('expected_clock_in', { ascending: true });
+
+const candidates = (data ?? []) as RosterDetailRow[];
+
+const active = candidates.find((s) => s.status === 'in_progress') ?? null;
+const next = candidates.find((s) => s.status === 'scheduled') ?? null;
+const target = active ?? next;
+const mode = active ? 'out' : 'in';
+
+const geofence = {
+  lat: Number(settings?.latitude ?? 0),
+  lng: Number(settings?.longitude ?? 0),
+  radius: Number(settings?.geofence_radius_meters ?? 100),
+  hotel: settings?.hotel_name ?? 'the hotel',
+};
+---
+
+<MobileLayout
+  title="Clock in"
+  heading={mode === 'out' ? 'Clock out' : 'Clock in'}
+  subheading={`${geofence.hotel} · within ${geofence.radius} m`}
+>
+  <Flash />
+
+  {
+    !target ? (
+      <section class="card px-4 py-10 text-center">
+        <p class="text-sm font-medium text-slate-900">No shift to clock into.</p>
+        <p class="mt-1 text-sm text-slate-500">
+          You have no scheduled or in-progress shift today. Check your roster for this week.
+        </p>
+        <a class="btn-secondary mt-4" href="/mobile">Back to today</a>
+      </section>
+    ) : (
+      <>
+        <section class="card px-4 py-4">
+          <p class="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+            {mode === 'out' ? 'Finishing' : 'Starting'}
+          </p>
+          <p class="mt-1 text-xl font-semibold text-slate-900">{target.shift_name}</p>
+          <p class="mt-0.5 text-sm text-slate-600">
+            {formatDayLabel(target.shift_date)} ·{' '}
+            {trimSeconds(target.start_time)}–{trimSeconds(target.end_time)}
+            {target.is_overnight && <span class="text-amber-700"> (ends next day)</span>}
+          </p>
+          {mode === 'out' && (
+            <p class="mt-2 text-sm text-slate-600">
+              Clocked in at <strong>{formatTimeIn(target.clock_in_time, timeZone)}</strong>
+            </p>
+          )}
+        </section>
+
+        <form
+          method="post"
+          action={mode === 'out' ? '/api/attendance/clock-out' : '/api/attendance/clock-in'}
+          enctype="multipart/form-data"
+          id="clock-form"
+          class="mt-4 space-y-4"
+        >
+          <input type="hidden" name="roster_id" value={target.id} />
+          <input type="hidden" name="latitude" id="latitude" />
+          <input type="hidden" name="longitude" id="longitude" />
+          <input type="hidden" name="accuracy" id="accuracy" />
+          <input type="hidden" name="photo" id="photo" />
+
+          <section class="card overflow-hidden">
+            <header class="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+              <h2 class="text-xs font-semibold tracking-wide text-slate-500 uppercase">1 · Location</h2>
+              <span class="pill bg-slate-100 text-slate-600" id="geo-pill">Checking…</span>
+            </header>
+            <div class="px-4 py-3">
+              <p class="text-sm text-slate-600" id="geo-status">Requesting your location…</p>
+              <button type="button" class="btn-secondary mt-3 w-full" id="geo-retry" hidden>
+                Try location again
+              </button>
+            </div>
+          </section>
+
+          <section class="card overflow-hidden">
+            <header class="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+              <h2 class="text-xs font-semibold tracking-wide text-slate-500 uppercase">2 · Selfie</h2>
+              <span class="pill bg-slate-100 text-slate-600" id="cam-pill">Not taken</span>
+            </header>
+
+            <!-- Capped so the capture button stays above the fold on a phone. -->
+            <div class="relative aspect-[3/4] max-h-[42svh] w-full overflow-hidden bg-slate-900">
+              <video
+                id="preview"
+                class="h-full w-full object-cover"
+                playsinline
+                muted
+                autoplay
+              ></video>
+              <canvas id="canvas" class="absolute inset-0 hidden h-full w-full object-cover"></canvas>
+            </div>
+
+            <div class="flex gap-2 px-4 py-3">
+              <button type="button" class="btn-primary flex-1" id="capture">Take photo</button>
+              <button type="button" class="btn-secondary flex-1" id="retake" hidden>Retake</button>
+            </div>
+
+            <!-- Fallback for browsers that refuse getUserMedia (or an insecure origin). -->
+            <div class="hidden px-4 pb-3" id="file-fallback">
+              <label class="field-label" for="photo-file">Camera unavailable — take a photo</label>
+              <input
+                class="field-input"
+                id="photo-file"
+                type="file"
+                accept="image/*"
+                capture="user"
+              />
+            </div>
+          </section>
+
+          <button type="submit" class="btn-primary w-full py-3 text-base" id="submit" disabled>
+            {mode === 'out' ? 'Clock out' : 'Clock in'}
+          </button>
+          <p class="text-center text-xs text-slate-500" id="submit-hint">
+            Location and a live selfie are both required.
+          </p>
+        </form>
+      </>
+    )
+  }
+</MobileLayout>
+
+<script is:inline define:vars={{ geofence, mode }}>
+  // Progressive enhancement around two device APIs. The server re-checks the
+  // distance against the authoritative coordinate, so nothing here is trusted;
+  // this only spares the employee a round trip and explains what went wrong.
+  (function () {
+    const form = document.querySelector('#clock-form');
+    if (!form) return;
+
+    const latInput = document.querySelector('#latitude');
+    const lngInput = document.querySelector('#longitude');
+    const accInput = document.querySelector('#accuracy');
+    const photoInput = document.querySelector('#photo');
+    const geoPill = document.querySelector('#geo-pill');
+    const geoStatus = document.querySelector('#geo-status');
+    const geoRetry = document.querySelector('#geo-retry');
+    const camPill = document.querySelector('#cam-pill');
+    const video = document.querySelector('#preview');
+    const canvas = document.querySelector('#canvas');
+    const captureBtn = document.querySelector('#capture');
+    const retakeBtn = document.querySelector('#retake');
+    const fileFallback = document.querySelector('#file-fallback');
+    const fileInput = document.querySelector('#photo-file');
+    const submitBtn = document.querySelector('#submit');
+    const submitHint = document.querySelector('#submit-hint');
+
+    let hasLocation = false;
+    let hasPhoto = false;
+    let stream = null;
+
+    function metres(lat1, lon1, lat2, lon2) {
+      const toRad = (deg) => (deg * Math.PI) / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+      return 6371000 * 2 * Math.asin(Math.min(1, Math.sqrt(a)));
+    }
+
+    function refreshSubmit() {
+      const ready = hasLocation && hasPhoto;
+      submitBtn.disabled = !ready;
+      if (submitHint) {
+        submitHint.textContent = ready
+          ? 'Ready. Your time, location and photo will be recorded.'
+          : 'Location and a live selfie are both required.';
+      }
+    }
+
+    function setPill(el, text, tone) {
+      el.textContent = text;
+      el.className =
+        'pill ' +
+        (tone === 'ok'
+          ? 'bg-emerald-100 text-emerald-800'
+          : tone === 'warn'
+            ? 'bg-amber-100 text-amber-800'
+            : tone === 'bad'
+              ? 'bg-rose-100 text-rose-800'
+              : 'bg-slate-100 text-slate-600');
+    }
+
+    function requestLocation() {
+      if (!navigator.geolocation) {
+        setPill(geoPill, 'Unavailable', 'bad');
+        geoStatus.textContent = 'This device cannot report a location, so clocking in is not possible here.';
+        return;
+      }
+
+      geoRetry.hidden = true;
+      setPill(geoPill, 'Checking…', 'neutral');
+      geoStatus.textContent = 'Requesting your location…';
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude, accuracy } = pos.coords;
+          latInput.value = latitude.toFixed(6);
+          lngInput.value = longitude.toFixed(6);
+          accInput.value = String(Math.round(accuracy));
+
+          const distance = Math.round(metres(latitude, longitude, geofence.lat, geofence.lng));
+          const inside = distance <= geofence.radius;
+
+          // Out of range still submits: only the server decides, and for a
+          // clock-out being outside the zone is recorded rather than refused.
+          hasLocation = true;
+
+          if (inside) {
+            setPill(geoPill, `${distance} m`, 'ok');
+            geoStatus.textContent = `You are about ${distance} m from ${geofence.hotel} (±${Math.round(accuracy)} m).`;
+          } else if (mode === 'out') {
+            setPill(geoPill, `${distance} m`, 'warn');
+            geoStatus.textContent = `You are about ${distance} m away — outside the ${geofence.radius} m zone. Your clock-out will be recorded and flagged for your head of department.`;
+          } else {
+            setPill(geoPill, `${distance} m`, 'bad');
+            geoStatus.textContent = `You are about ${distance} m from ${geofence.hotel}, outside the ${geofence.radius} m zone. Move closer and check again.`;
+          }
+
+          geoRetry.hidden = false;
+          refreshSubmit();
+        },
+        (err) => {
+          setPill(geoPill, 'Blocked', 'bad');
+          geoStatus.textContent =
+            err.code === err.PERMISSION_DENIED
+              ? 'Location permission was denied. Enable it for this site, then try again.'
+              : `Could not read your location: ${err.message}`;
+          geoRetry.hidden = false;
+          refreshSubmit();
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+      );
+    }
+
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 1280 } },
+          audio: false,
+        });
+        video.srcObject = stream;
+      } catch {
+        // No camera access: fall back to the OS camera via a file input.
+        video.closest('div').classList.add('hidden');
+        captureBtn.hidden = true;
+        fileFallback.classList.remove('hidden');
+      }
+    }
+
+    function stopCamera() {
+      stream?.getTracks().forEach((track) => track.stop());
+      stream = null;
+    }
+
+    captureBtn?.addEventListener('click', () => {
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (!w || !h) return;
+
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      // Un-mirror: the preview is shown mirrored, the record should not be.
+      ctx.drawImage(video, 0, 0, w, h);
+
+      photoInput.value = canvas.toDataURL('image/jpeg', 0.72);
+      canvas.classList.remove('hidden');
+      video.classList.add('hidden');
+      captureBtn.hidden = true;
+      retakeBtn.hidden = false;
+      setPill(camPill, 'Captured', 'ok');
+      hasPhoto = true;
+      stopCamera();
+      refreshSubmit();
+    });
+
+    retakeBtn?.addEventListener('click', async () => {
+      photoInput.value = '';
+      hasPhoto = false;
+      canvas.classList.add('hidden');
+      video.classList.remove('hidden');
+      retakeBtn.hidden = true;
+      captureBtn.hidden = false;
+      setPill(camPill, 'Not taken', 'neutral');
+      refreshSubmit();
+      await startCamera();
+    });
+
+    fileInput?.addEventListener('change', () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        photoInput.value = String(reader.result ?? '');
+        hasPhoto = Boolean(photoInput.value);
+        setPill(camPill, hasPhoto ? 'Captured' : 'Not taken', hasPhoto ? 'ok' : 'neutral');
+        refreshSubmit();
+      };
+      reader.readAsDataURL(file);
+    });
+
+    geoRetry?.addEventListener('click', requestLocation);
+    form.addEventListener('submit', () => {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Submitting…';
+      stopCamera();
+    });
+    window.addEventListener('pagehide', stopCamera);
+
+    requestLocation();
+    startCamera();
+  })();
+</script>

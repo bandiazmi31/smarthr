@@ -1,0 +1,227 @@
+---
+import AppLayout from '../../../layouts/AppLayout.astro';
+import Flash from '../../../components/Flash.astro';
+import { MAX_DEPARTMENT_NAME_LENGTH } from '../../../lib/departments';
+import { takeFormFlash } from '../../../lib/flash';
+import { formatDate } from '../../../lib/format';
+import type { DepartmentSummaryRow } from '../../../types/database';
+
+const { supabase } = Astro.locals;
+const url = Astro.url;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const editId = url.searchParams.get('edit') ?? '';
+const editing = UUID.test(editId) ? editId : '';
+
+const { data, error } = await supabase
+  .from('department_summary')
+  .select('*')
+  .order('name', { ascending: true });
+
+const departments = (data ?? []) as DepartmentSummaryRow[];
+const current = editing ? departments.find((d) => d.id === editing) : undefined;
+
+// A rejected submission comes back through the flash cookie with what was typed.
+const flash = takeFormFlash(Astro.cookies);
+const errors = flash?.errors ?? {};
+const hasErrors = Object.keys(errors).length > 0;
+
+const values = {
+  name: flash?.values.name ?? current?.name ?? '',
+  description: flash?.values.description ?? current?.description ?? '',
+};
+
+const totalAssigned = departments.reduce((sum, d) => sum + Number(d.employee_count), 0);
+---
+
+<AppLayout
+  title="Departments"
+  heading="Department master data"
+  description="The organisational units employees can be assigned to."
+>
+  <Flash />
+
+  {
+    error && (
+      <div role="alert" class="mb-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+        Could not load departments: {error.message}
+      </div>
+    )
+  }
+
+  <div class="grid gap-6 xl:grid-cols-[380px_1fr] xl:items-start">
+    <!-- Form pane: stays put so the admin can enter several in a row. -->
+    <section class="card p-6 xl:sticky xl:top-6">
+      <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">
+        {current ? 'Edit department' : 'New department'}
+      </h2>
+      {
+        current && (
+          <p class="mt-1 text-sm text-slate-500">
+            Renaming updates every employee record that points at it.
+          </p>
+        )
+      }
+
+      {
+        hasErrors && (
+          <div role="alert" class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+            Nothing was saved. Please correct the field below.
+          </div>
+        )
+      }
+
+      <form
+        method="post"
+        action={current ? '/api/departments/update' : '/api/departments/create'}
+        class="mt-4 space-y-4"
+        novalidate
+      >
+        {current && <input type="hidden" name="id" value={current.id} />}
+
+        <div>
+          <label class="field-label" for="name">
+            Department name <span class="text-rose-500">*</span>
+          </label>
+          <input
+            class="field-input"
+            id="name"
+            name="name"
+            value={values.name}
+            maxlength={MAX_DEPARTMENT_NAME_LENGTH}
+            placeholder="e.g. Food & Beverage Service"
+            autocomplete="off"
+            required
+          />
+          {
+            errors.name
+              ? <p class="field-error">{errors.name}</p>
+              : <p class="field-hint">Must be unique. Up to {MAX_DEPARTMENT_NAME_LENGTH} characters.</p>
+          }
+        </div>
+
+        <div>
+          <label class="field-label" for="description">Description</label>
+          <textarea
+            class="field-input"
+            id="description"
+            name="description"
+            rows="3"
+            placeholder="What this unit covers (optional)."
+          >{values.description}</textarea>
+          {errors.description && <p class="field-error">{errors.description}</p>}
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button type="submit" class="btn-primary">
+            {current ? 'Save changes' : 'Add department'}
+          </button>
+          {current && <a href="/hr/departments" class="btn-secondary">Cancel</a>}
+        </div>
+      </form>
+    </section>
+
+    <!-- Table pane -->
+    <section class="card overflow-hidden">
+      <header class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+        <div>
+          <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">
+            All departments
+          </h2>
+          <p class="mt-1 text-sm text-slate-500">
+            {departments.length} department{departments.length === 1 ? '' : 's'} ·
+            {' '}{totalAssigned} employee record{totalAssigned === 1 ? '' : 's'} assigned
+          </p>
+        </div>
+      </header>
+
+      {
+        departments.length === 0 ? (
+          <div class="px-5 py-16 text-center">
+            <p class="text-sm font-medium text-slate-900">No departments yet.</p>
+            <p class="mt-1 text-sm text-slate-500">
+              Create your first department using the form on the left — employees cannot be
+              registered until one exists.
+            </p>
+          </div>
+        ) : (
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-50 text-xs tracking-wide text-slate-500 uppercase">
+                <tr>
+                  <th scope="col" class="px-5 py-3 font-semibold">Department</th>
+                  <th scope="col" class="px-5 py-3 font-semibold">Employees</th>
+                  <th scope="col" class="px-5 py-3 font-semibold">Created</th>
+                  <th scope="col" class="px-5 py-3 text-right font-semibold">
+                    <span class="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                {
+                  departments.map((row) => {
+                    const assigned = Number(row.employee_count);
+                    const active = Number(row.active_employee_count);
+                    return (
+                      <tr class:list={['hover:bg-slate-50/75', row.id === editing && 'bg-brand-50/60']}>
+                        <td class="px-5 py-3">
+                          <p class="font-semibold text-slate-900">{row.name}</p>
+                          {row.description && (
+                            <p class="mt-0.5 max-w-prose text-xs text-slate-500">{row.description}</p>
+                          )}
+                        </td>
+                        <td class="px-5 py-3 whitespace-nowrap">
+                          <a
+                            class:list={[
+                              'pill',
+                              assigned > 0
+                                ? 'bg-brand-50 text-brand-700 hover:bg-brand-100'
+                                : 'bg-slate-100 text-slate-500',
+                            ]}
+                            href={`/hr/employees?status=all&department=${row.id}`}
+                          >
+                            {assigned} total
+                          </a>
+                          <p class="mt-1 text-xs text-slate-500">{active} active</p>
+                        </td>
+                        <td class="px-5 py-3 whitespace-nowrap text-slate-600">
+                          {formatDate(row.created_at)}
+                        </td>
+                        <td class="px-5 py-3">
+                          <div class="flex items-center justify-end gap-2">
+                            <a class="btn-secondary" href={`/hr/departments?edit=${row.id}`}>Edit</a>
+                            {
+                              assigned > 0 ? (
+                                <span
+                                  class="btn-secondary cursor-not-allowed opacity-50"
+                                  aria-disabled="true"
+                                  title={`${assigned} employee record${assigned === 1 ? '' : 's'} assigned`}
+                                >
+                                  Delete
+                                </span>
+                              ) : (
+                                <form method="post" action="/api/departments/delete">
+                                  <input type="hidden" name="id" value={row.id} />
+                                  <button type="submit" class="btn-danger">Delete</button>
+                                </form>
+                              )
+                            }
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                }
+              </tbody>
+            </table>
+          </div>
+        )
+      }
+
+      <footer class="border-t border-slate-200 px-5 py-3 text-xs text-slate-500">
+        A department can only be deleted once no employee record — active or alumni — points
+        at it. Reassign them from the employee record first.
+      </footer>
+    </section>
+  </div>
+</AppLayout>

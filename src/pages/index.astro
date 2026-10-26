@@ -1,0 +1,5 @@
+---
+// Smart HR has no public landing page; middleware has already resolved who this
+// visitor is, and each kind of user has a different home.
+return Astro.redirect(Astro.locals.actor.home, 302);
+---

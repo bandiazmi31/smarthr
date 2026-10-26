@@ -1,0 +1,273 @@
+---
+import AppLayout from '../../layouts/AppLayout.astro';
+import Flash from '../../components/Flash.astro';
+import {
+  addDays,
+  formatDayLabel,
+  formatWeekRange,
+  isValidIsoDate,
+  todayIn,
+  trimSeconds,
+  weekDates,
+  weekStart,
+} from '../../lib/datetime';
+import type {
+  DepartmentRow,
+  HotelSettingsRow,
+  MasterShiftRow,
+  PortalIdentityRow,
+  RosterDetailRow,
+} from '../../types/database';
+
+const { supabase, actor } = Astro.locals;
+const url = Astro.url;
+
+const { data: settings } = await supabase.from('hotel_settings').select('*').eq('id', true).maybeSingle();
+const timeZone = (settings as HotelSettingsRow | null)?.timezone ?? 'UTC';
+
+// HR may inspect any department; a HOD is pinned to their own.
+const requestedDept = url.searchParams.get('department') ?? '';
+const departmentId = actor.isHr
+  ? requestedDept || actor.employee?.department_id || ''
+  : (actor.employee?.department_id ?? '');
+
+const requestedWeek = url.searchParams.get('week') ?? '';
+const monday = weekStart(isValidIsoDate(requestedWeek) ? requestedWeek : todayIn(timeZone));
+const dates = weekDates(monday);
+const today = todayIn(timeZone);
+
+const [departmentsResult, shiftsResult] = await Promise.all([
+  actor.isHr
+    ? supabase.from('departments').select('id, name').order('name')
+    : Promise.resolve({ data: null, error: null }),
+  supabase
+    .from('master_shifts')
+    .select('*')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true }),
+]);
+
+const departments = (departmentsResult.data ?? []) as Pick<DepartmentRow, 'id' | 'name'>[];
+const shifts = (shiftsResult.data ?? []) as MasterShiftRow[];
+
+let staff: PortalIdentityRow[] = [];
+let rosters: RosterDetailRow[] = [];
+let loadError: string | null = null;
+
+if (departmentId) {
+  const [staffResult, rosterResult] = await Promise.all([
+    supabase
+      .from('portal_identity')
+      .select('*')
+      .eq('department_id', departmentId)
+      .order('full_name', { ascending: true }),
+    supabase
+      .from('roster_details')
+      .select('*')
+      .eq('department_id', departmentId)
+      .gte('shift_date', monday)
+      .lte('shift_date', dates[6]!),
+  ]);
+
+  staff = (staffResult.data ?? []) as PortalIdentityRow[];
+  rosters = (rosterResult.data ?? []) as RosterDetailRow[];
+  loadError = staffResult.error?.message ?? rosterResult.error?.message ?? null;
+}
+
+// employeeId -> shiftDate -> roster, for O(1) cell lookup.
+const assigned = new Map<string, Map<string, RosterDetailRow>>();
+for (const row of rosters) {
+  if (!assigned.has(row.employee_id)) assigned.set(row.employee_id, new Map());
+  assigned.get(row.employee_id)!.set(row.shift_date, row);
+}
+
+const departmentName =
+  departments.find((d) => d.id === departmentId)?.name ??
+  actor.employee?.department_name ??
+  rosters[0]?.department_name ??
+  'Department';
+
+const filled = rosters.length;
+const coverage = dates.map((date) => rosters.filter((r) => r.shift_date === date).length);
+
+const weekHref = (week: string) => {
+  const params = new URLSearchParams();
+  params.set('week', week);
+  if (actor.isHr && departmentId) params.set('department', departmentId);
+  return `/hod/roster?${params.toString()}`;
+};
+---
+
+<AppLayout
+  title="Rostering"
+  heading={`Roster · ${departmentName}`}
+  description={`Week of ${formatWeekRange(monday)} · times shown in ${timeZone}`}
+>
+  <Flash />
+
+  {
+    loadError && (
+      <div role="alert" class="mb-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+        Could not load the roster: {loadError}
+      </div>
+    )
+  }
+
+  <section class="card mb-5 flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+    <div class="flex flex-wrap items-center gap-2">
+      <a class="btn-secondary" href={weekHref(addDays(monday, -7))}>← Previous</a>
+      <a class="btn-secondary" href={weekHref(weekStart(today))}>This week</a>
+      <a class="btn-secondary" href={weekHref(addDays(monday, 7))}>Next →</a>
+    </div>
+
+    {
+      actor.isHr && departments.length > 0 && (
+        <form method="get" class="flex items-center gap-2">
+          <input type="hidden" name="week" value={monday} />
+          <label class="sr-only" for="department">Department</label>
+          <select class="field-input" id="department" name="department">
+            {departments.map((d) => (
+              <option value={d.id} selected={d.id === departmentId}>{d.name}</option>
+            ))}
+          </select>
+          <button type="submit" class="btn-secondary">View</button>
+        </form>
+      )
+    }
+
+    <p class="text-sm text-slate-500">
+      <strong class="text-slate-900 tabular-nums">{filled}</strong> shift{filled === 1 ? '' : 's'} scheduled
+    </p>
+  </section>
+
+  <section class="card mb-5 px-5 py-4">
+    <h2 class="text-xs font-semibold tracking-wide text-slate-500 uppercase">Shift legend</h2>
+    <ul class="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-600">
+      {
+        shifts.map((s) => (
+          <li>
+            <span class="font-semibold text-slate-900">{s.code}</span> · {s.name}{' '}
+            {trimSeconds(s.start_time)}–{trimSeconds(s.end_time)}
+            {s.is_overnight && <span class="text-amber-700"> (+1 day)</span>}
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  {
+    !departmentId ? (
+      <div class="card px-5 py-16 text-center">
+        <p class="text-sm font-medium text-slate-900">No department selected.</p>
+        <p class="mt-1 text-sm text-slate-500">Pick a department above to build its roster.</p>
+      </div>
+    ) : staff.length === 0 ? (
+      <div class="card px-5 py-16 text-center">
+        <p class="text-sm font-medium text-slate-900">No active staff in {departmentName}.</p>
+        <p class="mt-1 text-sm text-slate-500">
+          Assign employees to this department before building a roster.
+        </p>
+      </div>
+    ) : (
+      <form method="post" action="/api/rosters/publish">
+        <input type="hidden" name="week_start" value={monday} />
+        <input type="hidden" name="department_id" value={departmentId} />
+
+        <div class="card overflow-x-auto">
+          <table class="w-full border-collapse text-left text-sm">
+            <thead class="bg-slate-50 text-xs tracking-wide text-slate-500 uppercase">
+              <tr>
+                <th scope="col" class="sticky left-0 z-10 bg-slate-50 px-4 py-3 font-semibold">
+                  Staff
+                </th>
+                {
+                  dates.map((date, i) => (
+                    <th
+                      scope="col"
+                      class:list={[
+                        'px-2 py-3 text-center font-semibold whitespace-nowrap',
+                        date === today && 'bg-brand-50 text-brand-700',
+                      ]}
+                    >
+                      {formatDayLabel(date)}
+                      <span class="mt-0.5 block text-[10px] font-normal normal-case">
+                        {coverage[i]} on
+                      </span>
+                    </th>
+                  ))
+                }
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              {
+                staff.map((person) => (
+                  <tr class="hover:bg-slate-50/60">
+                    <th scope="row" class="sticky left-0 z-10 bg-white px-4 py-2 text-left font-normal">
+                      <p class="font-semibold text-slate-900">{person.full_name}</p>
+                      <p class="text-xs text-slate-500">
+                        {person.staff_number} · {person.job_title}
+                        {person.role === 'hod' && (
+                          <span class="ml-1 rounded bg-brand-50 px-1 text-[10px] font-semibold text-brand-700">
+                            HOD
+                          </span>
+                        )}
+                      </p>
+                    </th>
+                    {
+                      dates.map((date) => {
+                        const row = assigned.get(person.id)?.get(date);
+                        // A worked or in-progress shift must not be silently rewritten.
+                        const locked = row ? row.status !== 'scheduled' : false;
+                        return (
+                          <td class:list={['px-1.5 py-2 text-center', date === today && 'bg-brand-50/40']}>
+                            {locked ? (
+                              <>
+                                <input type="hidden" name={`cell:${person.id}:${date}`} value={row!.shift_id} />
+                                <span
+                                  class="pill w-full justify-center bg-slate-200 text-slate-600"
+                                  title={`${row!.shift_name} · already ${row!.status.replace('_', ' ')}`}
+                                >
+                                  {row!.shift_code}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <label class="sr-only" for={`cell-${person.id}-${date}`}>
+                                  {person.full_name} on {date}
+                                </label>
+                                <select
+                                  class="w-full min-w-[4.5rem] rounded-md border border-slate-300 bg-white px-1.5 py-1 text-center text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 focus:outline-none"
+                                  id={`cell-${person.id}-${date}`}
+                                  name={`cell:${person.id}:${date}`}
+                                >
+                                  <option value="">—</option>
+                                  {shifts.map((s) => (
+                                    <option value={s.id} selected={row?.shift_id === s.id}>
+                                      {s.code}
+                                    </option>
+                                  ))}
+                                </select>
+                              </>
+                            )}
+                          </td>
+                        );
+                      })
+                    }
+                  </tr>
+                ))
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
+          <p class="text-xs text-slate-500">
+            Publishing replaces this week's scheduled shifts for {departmentName}. Shifts already
+            started or completed are locked and left untouched.
+          </p>
+          <button type="submit" class="btn-primary">Publish week</button>
+        </div>
+      </form>
+    )
+  }
+</AppLayout>
