@@ -41,6 +41,15 @@ const next = candidates.find((s) => s.status === 'scheduled') ?? null;
 const target = active ?? next;
 const mode = active ? 'out' : 'in';
 
+// PRD v2.0 §4.2: clocking in opens a fixed number of minutes before the shift.
+// Showing the time is friendlier than letting them submit into a refusal.
+const earlyLimitMins = Number(settings?.early_clock_in_limit_mins ?? 45);
+const opensAt =
+  target && mode === 'in'
+    ? new Date(new Date(target.expected_clock_in).getTime() - earlyLimitMins * 60_000)
+    : null;
+const tooEarly = opensAt !== null && Date.now() < opensAt.getTime();
+
 const geofence = {
   lat: Number(settings?.latitude ?? 0),
   lng: Number(settings?.longitude ?? 0),
@@ -84,12 +93,27 @@ const geofence = {
           )}
         </section>
 
+        {tooEarly && (
+          <div
+            role="status"
+            class="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+          >
+            <p class="font-semibold">Too early to clock in.</p>
+            <p class="mt-1">
+              Clocking in opens at{' '}
+              <strong>{formatTimeIn(opensAt!.toISOString(), timeZone)}</strong>, {earlyLimitMins}{' '}
+              minutes before your shift. Come back then.
+            </p>
+          </div>
+        )}
+
         <form
           method="post"
           action={mode === 'out' ? '/api/attendance/clock-out' : '/api/attendance/clock-in'}
           enctype="multipart/form-data"
           id="clock-form"
-          class="mt-4 space-y-4"
+          class:list={['mt-4 space-y-4', tooEarly && 'hidden']}
+          aria-hidden={tooEarly}
         >
           <input type="hidden" name="roster_id" value={target.id} />
           <input type="hidden" name="latitude" id="latitude" />
@@ -164,7 +188,9 @@ const geofence = {
   // this only spares the employee a round trip and explains what went wrong.
   (function () {
     const form = document.querySelector('#clock-form');
-    if (!form) return;
+    // Hidden means the clock-in window has not opened: don't ask for the
+    // camera or the location until there is something to submit.
+    if (!form || form.classList.contains('hidden')) return;
 
     const latInput = document.querySelector('#latitude');
     const lngInput = document.querySelector('#longitude');

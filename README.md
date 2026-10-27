@@ -51,7 +51,8 @@ the same trigger does the linking.
 | Weekly roster grid, one shift per staff member per day | `/hod/roster` |
 | Geofence anchor, radius, timezone, shift definitions | `/hr/settings` |
 | Staff portal: today's shift, this week, hours and lateness | `/mobile` |
-| Clock in/out with GPS + live selfie | `/mobile/clock-in` |
+| Clock in/out with GPS + live selfie, no gallery uploads | `/mobile/clock-in` |
+| Selfies auto-deleted after 90 days | `purge-attendance-photos` Edge Function |
 | Shift swaps: colleague accepts, then HOD approves | `/mobile/swaps` |
 | Mon–Fri backoffice rosters generated every Sunday | `pg_cron` → `generate_backoffice_rosters()` |
 
@@ -97,6 +98,10 @@ runtime. Neither has a `PUBLIC_` prefix, so neither reaches the browser bundle.
      account with no matching employee record gets no data.
 5. Set the real geofence coordinate on `/hr/settings`. The migration ships a
    placeholder, and clock-in will reject everyone until it is correct.
+6. To enable the 90-day selfie purge: set a `PURGE_SECRET` on the
+   `purge-attendance-photos` Edge Function, then run
+   `scripts/enable-photo-retention.sql`. Until both are done the function refuses
+   every request, so nothing is ever deleted by accident.
 
 ### Schema
 
@@ -149,7 +154,26 @@ the day it started.
 **Geofencing.** `app_private.haversine_meters()` computes great-circle distance;
 `clock_in()` rejects anything beyond `geofence_radius_meters` with
 *"You are outside the designated clock-in zone."* The check lives in the database,
-not the API, so it holds for any caller.
+not the API, so it holds for any caller — the browser's own distance calculation is
+advisory only and spoofing it changes nothing.
+
+**Clock-in window.** A shift can only be clocked into from
+`hotel_settings.early_clock_in_limit_mins` (default 45) before it starts, so an
+early arrival is not logged as premature overtime. The window is checked *before*
+the geofence, so someone standing in the lobby an hour early gets the useful
+message rather than a location error. Lateness is anything past the shift's
+`grace_period_mins` (default 15).
+
+**Photo retention.** Selfies are deleted after `photo_retention_days` (default 90);
+the attendance times themselves are kept forever. This runs in an Edge Function
+rather than in Postgres because deleting a row from `storage.objects` leaves the
+file in the bucket — only the Storage API reclaims the space. See
+`scripts/enable-photo-retention.sql`.
+
+**API responses.** The attendance endpoints answer in the caller's content type.
+A browser form gets a 303 back to the page; a caller sending
+`Accept: application/json` gets a status code — 403 outside the geofence (PRD v2.0
+§3.1), 409 too early or already clocked in, 404 unknown shift, 201/200 on success.
 
 Clock-**out** records the distance but does not refuse it. Refusing would strand
 someone who has already left the property, producing a worse record than one
@@ -158,6 +182,11 @@ flagged for the HOD; off-site clock-outs surface in the UI instead.
 **Swaps.** `decide_shift_swap()` trades `employee_id` across the two rosters in a
 single statement. `rosters_one_shift_per_day` is `DEFERRABLE` precisely because a
 same-day trade passes through a momentarily duplicate state.
+
+The request snapshots both names, dates and shift codes when it is made, and the
+roster references are `ON DELETE SET NULL`. The approval trail is the point of the
+feature, so it has to outlive the shifts it describes — re-publishing a week must
+not erase who agreed to what.
 
 ### Security model
 
@@ -247,7 +276,7 @@ The PRD's route table, as built:
 | `/api/employees/export-csv` | GET | CSV download honouring current filters |
 | `/api/auth/register` | POST | Staff self-activation |
 | `/api/settings/update` | POST | Geofence and timezone |
-| `/api/rosters/publish` | POST | Reconcile one department-week |
+| `/api/rosters/generate` | POST | Reconcile one department-week |
 | `/api/attendance/clock-in` | POST | Upload selfie, then `clock_in()` |
 | `/api/attendance/clock-out` | POST | Upload selfie, then `clock_out()` |
 | `/api/swaps/request` | POST | Open a swap |

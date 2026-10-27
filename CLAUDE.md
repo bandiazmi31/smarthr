@@ -89,6 +89,33 @@ file records the decisions worth knowing before changing anything.
   `@smarthrhotel.com`. Staff activation also needs "Confirm email" off, or real
   mailboxes — otherwise the built-in SMTP rate-limits signup immediately.
 
+## Phase 2 v2.0 additions
+
+- `hotel_settings` now carries three policy knobs, not one: `geofence_radius_meters`,
+  `early_clock_in_limit_mins` (45) and `photo_retention_days` (90). Put new
+  attendance policy there rather than hard-coding it.
+- `clock_in()` checks the early window **before** the geofence, deliberately: an
+  employee waiting in the lobby should be told the shift has not opened, not that
+  their location is wrong.
+- The attendance endpoints content-negotiate. `wantsJson()` in `src/lib/http.ts`
+  decides, and `statusForDbError()` maps the SQLSTATE the functions raise onto an
+  HTTP status. If you add a new `raise exception`, give it a SQLSTATE and add it
+  there, or API clients get a generic 400.
+- `clock_in_photo_path` is now nullable — the retention job clears it. Anything
+  rendering a selfie must handle null and check `photos_purged_at`.
+- `supabase/functions` is excluded from `tsconfig.json`: it runs on Deno with its
+  own globals and `jsr:` imports, so `astro check` cannot type-check it.
+- The retention job is the one place a service-role key exists, and it is injected
+  by the platform into the Edge Function — never in the repo, never in `.env`,
+  never reachable by the Astro app. The ground rule above still holds for the app.
+- **`shift_swaps` is an audit record, so it snapshots itself.** Both names, both
+  dates, both shift codes, both employee ids and the department are written at
+  request time; the roster FKs are `ON DELETE SET NULL`. They used to be
+  `ON DELETE CASCADE`, which meant clearing a cell in the roster grid silently
+  destroyed the approval history for that shift. Read swaps through
+  `my_shift_swaps()` or the snapshot columns — never by joining `rosters`, which
+  may be gone — and `decide_shift_swap` refuses cleanly when either side is NULL.
+
 ## Gotchas
 
 - `@apply` in Tailwind v4 cannot reference a class defined in `@layer components`.

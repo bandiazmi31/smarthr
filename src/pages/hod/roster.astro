@@ -169,7 +169,7 @@ const weekHref = (week: string) => {
         </p>
       </div>
     ) : (
-      <form method="post" action="/api/rosters/publish">
+      <form method="post" action="/api/rosters/generate">
         <input type="hidden" name="week_start" value={monday} />
         <input type="hidden" name="department_id" value={departmentId} />
 

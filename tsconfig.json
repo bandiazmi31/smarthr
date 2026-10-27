@@ -1,5 +1,6 @@
 {
   "extends": "astro/tsconfigs/strict",
   "include": [".astro/types.d.ts", "**/*"],
-  "exclude": ["dist"]
+  "comment": "supabase/functions runs on Deno (its own globals and jsr: imports), so it is checked by the Supabase CLI, not by astro check.",
+  "exclude": ["dist", "supabase/functions"]
 }

@@ -93,6 +93,8 @@ export type HotelSettingsRow = {
   latitude: number;
   longitude: number;
   geofence_radius_meters: number;
+  early_clock_in_limit_mins: number;
+  photo_retention_days: number;
   timezone: string;
   updated_at: string;
   updated_by: string | null;
@@ -143,14 +145,25 @@ export type AttendanceLogRow = {
   early_leave_minutes: number;
   overtime_minutes: number;
   worked_minutes: number | null;
+  photos_purged_at: string | null;
   created_at: string;
 };
 
 export type ShiftSwapRow = {
   id: string;
-  requester_roster_id: string;
-  target_roster_id: string;
+  /** NULL once the roster it described has been deleted; the snapshot below remains. */
+  requester_roster_id: string | null;
+  target_roster_id: string | null;
   reason: string | null;
+  requester_employee_id: string | null;
+  requester_name: string | null;
+  requester_shift_date: string | null;
+  requester_shift_code: string | null;
+  target_employee_id: string | null;
+  target_name: string | null;
+  target_shift_date: string | null;
+  target_shift_code: string | null;
+  department_id: string | null;
   status: SwapStatus;
   target_responded_at: string | null;
   decided_at: string | null;
@@ -194,6 +207,7 @@ export type RosterDetailRow = {
   clock_out_photo_path: string | null;
 };
 
+/** What `my_shift_swaps()` returns: the snapshot plus the resolved shift names. */
 export type ShiftSwapDetailRow = {
   id: string;
   status: SwapStatus;
@@ -202,20 +216,26 @@ export type ShiftSwapDetailRow = {
   created_at: string;
   target_responded_at: string | null;
   decided_at: string | null;
-  requester_roster_id: string;
-  target_roster_id: string;
-  requester_employee_id: string;
+  requester_roster_id: string | null;
+  target_roster_id: string | null;
+  requester_employee_id: string | null;
   requester_name: string;
-  department_id: string;
+  department_id: string | null;
   requester_shift_date: string;
   requester_shift_name: string;
   requester_shift_code: string;
-  target_employee_id: string;
+  target_employee_id: string | null;
   target_name: string;
   target_shift_date: string;
   target_shift_name: string;
   target_shift_code: string;
 };
+
+/** The `shift_swap_details` view: the raw snapshot, without shift names. */
+export type ShiftSwapSummaryRow = Omit<
+  ShiftSwapDetailRow,
+  'requester_shift_name' | 'target_shift_name'
+>;
 
 export type SwappableShiftRow = {
   roster_id: string;
@@ -326,7 +346,7 @@ export type Database = {
         Relationships: [];
       };
       shift_swap_details: {
-        Row: ShiftSwapDetailRow;
+        Row: ShiftSwapSummaryRow;
         Relationships: [];
       };
       portal_identity: {

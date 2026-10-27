@@ -5,7 +5,7 @@ import {
   parseCoordinates,
   photoPath,
 } from '../../../lib/attendance';
-import { jsonError, redirectBack } from '../../../lib/http';
+import { jsonError, redirectBack, statusForDbError, wantsJson } from '../../../lib/http';
 
 export const prerender = false;
 
@@ -53,10 +53,20 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   if (error) {
     await supabase.storage.from(ATTENDANCE_BUCKET).remove([path]);
+    if (wantsJson(request)) {
+      return jsonError(error.message, statusForDbError(error.code));
+    }
     return redirectBack(BACK, { error: error.message });
   }
 
   const result = data as { worked_minutes: number; outside_zone: boolean } | null;
+
+  if (wantsJson(request)) {
+    return new Response(JSON.stringify({ ok: true, ...result }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
   return redirectBack('/mobile', {
     ok: result?.outside_zone ? 'clocked_out_offsite' : 'clocked_out',
