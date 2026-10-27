@@ -74,11 +74,91 @@ const timeZone = settings?.timezone ?? 'UTC';
           </div>
         </div>
 
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="field-label" for="early_clock_in_limit_mins">Clock-in opens (min before)</label>
+            <input
+              class="field-input"
+              id="early_clock_in_limit_mins"
+              name="early_clock_in_limit_mins"
+              type="number"
+              min="0"
+              max="480"
+              value={settings?.early_clock_in_limit_mins ?? 45}
+              required
+            />
+          </div>
+          <div>
+            <label class="field-label" for="photo_retention_days">Selfie retention (days)</label>
+            <input
+              class="field-input"
+              id="photo_retention_days"
+              name="photo_retention_days"
+              type="number"
+              min="1"
+              max="3650"
+              value={settings?.photo_retention_days ?? 90}
+              required
+            />
+          </div>
+        </div>
+
         <div class="flex items-center justify-between gap-3">
           <p class="text-xs text-slate-500">
             Last updated {formatDateTimeIn(settings?.updated_at ?? null, timeZone)}
           </p>
           <button type="submit" class="btn-primary">Save settings</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card p-6 lg:col-span-2">
+      <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">
+        Leave, overtime & payroll policy
+      </h2>
+      <p class="mt-1 text-sm text-slate-500">
+        These drive the leave balances, the coverage warning, the overtime rates and the
+        service-charge calculation.
+      </p>
+
+      <form method="post" action="/api/settings/policy" class="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-4" novalidate>
+        <div>
+          <label class="field-label" for="annual_leave_days">Annual leave (days/year)</label>
+          <input class="field-input" id="annual_leave_days" name="annual_leave_days" type="number" min="0" max="365" value={settings?.annual_leave_days ?? 12} required />
+          <p class="field-hint">Seeds new balance rows.</p>
+        </div>
+        <div>
+          <label class="field-label" for="sick_cert_required_after_days">Sick cert after (days)</label>
+          <input class="field-input" id="sick_cert_required_after_days" name="sick_cert_required_after_days" type="number" min="0" max="30" value={settings?.sick_cert_required_after_days ?? 1} required />
+        </div>
+        <div>
+          <label class="field-label" for="leave_coverage_threshold_pct">Coverage threshold (%)</label>
+          <input class="field-input" id="leave_coverage_threshold_pct" name="leave_coverage_threshold_pct" type="number" min="0" max="100" value={settings?.leave_coverage_threshold_pct ?? 60} required />
+          <p class="field-hint">Below this, approvals are flagged.</p>
+        </div>
+        <div>
+          <label class="field-label" for="payroll_cutoff_day">Payroll cut-off day</label>
+          <input class="field-input" id="payroll_cutoff_day" name="payroll_cutoff_day" type="number" min="1" max="28" value={settings?.payroll_cutoff_day ?? 20} required />
+        </div>
+        <div>
+          <label class="field-label" for="overtime_multiplier">Overtime rate (×)</label>
+          <input class="field-input" id="overtime_multiplier" name="overtime_multiplier" type="number" step="0.25" min="1" max="10" value={settings?.overtime_multiplier ?? 1.5} required />
+        </div>
+        <div>
+          <label class="field-label" for="public_holiday_multiplier">Public holiday rate (×)</label>
+          <input class="field-input" id="public_holiday_multiplier" name="public_holiday_multiplier" type="number" step="0.25" min="1" max="10" value={settings?.public_holiday_multiplier ?? 2} required />
+        </div>
+        <div>
+          <label class="field-label" for="late_penalty_threshold">Late count before penalty</label>
+          <input class="field-input" id="late_penalty_threshold" name="late_penalty_threshold" type="number" min="0" max="31" value={settings?.late_penalty_threshold ?? 3} required />
+        </div>
+        <div>
+          <label class="field-label" for="late_penalty_pct">Point penalty (%)</label>
+          <input class="field-input" id="late_penalty_pct" name="late_penalty_pct" type="number" step="0.5" min="0" max="100" value={settings?.late_penalty_pct ?? 10} required />
+        </div>
+
+        <div class="sm:col-span-2 lg:col-span-4 flex justify-end">
+          <button type="submit" class="btn-primary">Save policy</button>
         </div>
       </form>
     </section>

@@ -1,0 +1,267 @@
+---
+import AppLayout from '../../layouts/AppLayout.astro';
+import Flash from '../../components/Flash.astro';
+import { LEAVE_STATUS_LABELS, LEAVE_STATUS_STYLES } from '../../lib/leave';
+import { formatDate } from '../../lib/format';
+import type {
+  DepartmentRow,
+  HotelSettingsRow,
+  LeaveCoverageRow,
+  LeaveRequestRow,
+  PortalIdentityRow,
+} from '../../types/database';
+
+const { supabase, actor } = Astro.locals;
+const url = Astro.url;
+
+const { data: settingsRow } = await supabase
+  .from('hotel_settings').select('*').eq('id', true).maybeSingle();
+const settings = settingsRow as HotelSettingsRow | null;
+const threshold = Number(settings?.leave_coverage_threshold_pct ?? 60);
+
+const requestedDept = url.searchParams.get('department') ?? '';
+const departmentId = actor.isHr
+  ? requestedDept || actor.employee?.department_id || ''
+  : (actor.employee?.department_id ?? '');
+
+const [departmentsResult, requestsResult, staffResult] = await Promise.all([
+  actor.isHr
+    ? supabase.from('departments').select('id, name').order('name')
+    : Promise.resolve({ data: null, error: null }),
+  departmentId
+    ? supabase
+        .from('leave_requests')
+        .select('*')
+        .eq('department_id', departmentId)
+        .order('status', { ascending: true })
+        .order('start_date', { ascending: true })
+        .limit(100)
+    : Promise.resolve({ data: null, error: null }),
+  departmentId
+    ? supabase.from('portal_identity').select('*').eq('department_id', departmentId)
+    : Promise.resolve({ data: null, error: null }),
+]);
+
+const departments = (departmentsResult.data ?? []) as Pick<DepartmentRow, 'id' | 'name'>[];
+const requests = (requestsResult.data ?? []) as LeaveRequestRow[];
+const staff = (staffResult.data ?? []) as PortalIdentityRow[];
+const nameFor = new Map(staff.map((s) => [s.id, s]));
+
+const pending = requests.filter((r) => r.status === 'pending');
+const decided = requests.filter((r) => r.status !== 'pending');
+
+// PRD v3 §3.1: coverage is evaluated per requested date. The first day of the
+// range is the one shown inline; the worst day across the range is what matters
+// for the warning, so compute both.
+const coverageByRequest = new Map<string, { first: LeaveCoverageRow | null; worst: LeaveCoverageRow | null; date: string }>();
+
+if (departmentId && pending.length > 0) {
+  const lookups = pending.map(async (req) => {
+    const dates: string[] = [];
+    const start = new Date(`${req.start_date}T00:00:00Z`).getTime();
+    const end = new Date(`${req.end_date}T00:00:00Z`).getTime();
+    // Cap the probe at a week so a long request cannot fan out indefinitely.
+    for (let t = start, i = 0; t <= end && i < 7; t += 86_400_000, i += 1) {
+      dates.push(new Date(t).toISOString().slice(0, 10));
+    }
+
+    const results = await Promise.all(
+      dates.map(async (date) => {
+        const { data } = await supabase.rpc('leave_coverage', {
+          p_department_id: departmentId,
+          p_date: date,
+        } as never);
+        return { date, row: ((data ?? []) as LeaveCoverageRow[])[0] ?? null };
+      }),
+    );
+
+    const withRows = results.filter((r) => r.row !== null);
+    const worst = withRows.reduce<{ date: string; row: LeaveCoverageRow } | null>(
+      (lowest, candidate) =>
+        lowest === null || candidate.row!.ratio_pct < lowest.row.ratio_pct
+          ? { date: candidate.date, row: candidate.row! }
+          : lowest,
+      null,
+    );
+
+    coverageByRequest.set(req.id, {
+      first: results[0]?.row ?? null,
+      worst: worst?.row ?? null,
+      date: worst?.date ?? req.start_date,
+    });
+  });
+
+  await Promise.all(lookups);
+}
+
+const departmentName =
+  departments.find((d) => d.id === departmentId)?.name ??
+  actor.employee?.department_name ??
+  'Department';
+
+function coverageTone(row: LeaveCoverageRow | null): string {
+  if (!row) return 'bg-slate-100 text-slate-600';
+  if (row.below_threshold) return 'bg-rose-100 text-rose-800';
+  if (row.ratio_pct < threshold + 15) return 'bg-amber-100 text-amber-800';
+  return 'bg-emerald-100 text-emerald-800';
+}
+---
+
+<AppLayout
+  title="Leave approvals"
+  heading={`Leave · ${departmentName}`}
+  description={`Coverage below ${threshold}% is flagged before you approve.`}
+>
+  <Flash />
+
+  {
+    actor.isHr && departments.length > 0 && (
+      <form method="get" class="card mb-5 flex flex-wrap items-center gap-3 px-5 py-4">
+        <label class="text-sm font-medium text-slate-700" for="department">Department</label>
+        <select class="field-input max-w-xs" id="department" name="department">
+          {departments.map((d) => (
+            <option value={d.id} selected={d.id === departmentId}>{d.name}</option>
+          ))}
+        </select>
+        <button type="submit" class="btn-secondary">View</button>
+      </form>
+    )
+  }
+
+  <section class="card overflow-hidden">
+    <header class="border-b border-slate-200 px-5 py-4">
+      <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">
+        Awaiting your decision ({pending.length})
+      </h2>
+    </header>
+
+    {
+      pending.length === 0 ? (
+        <p class="px-5 py-12 text-center text-sm text-slate-500">
+          Nothing waiting. Requests appear here as soon as staff submit them.
+        </p>
+      ) : (
+        <ul class="divide-y divide-slate-100">
+          {pending.map((req) => {
+            const cov = coverageByRequest.get(req.id);
+            const worst = cov?.worst ?? null;
+            const person = nameFor.get(req.employee_id);
+            return (
+              <li class="px-5 py-4">
+                <div class="flex flex-wrap items-start justify-between gap-4">
+                  <div class="min-w-0">
+                    <p class="font-semibold text-slate-900">
+                      {person?.full_name ?? 'Employee'}
+                      <span class="ml-2 text-sm font-normal text-slate-500">
+                        {person?.job_title}
+                      </span>
+                    </p>
+                    <p class="mt-0.5 text-sm text-slate-600">
+                      <strong>{req.leave_type}</strong> · {formatDate(req.start_date)} –{' '}
+                      {formatDate(req.end_date)} · {req.days_count} day
+                      {Number(req.days_count) === 1 ? '' : 's'}
+                    </p>
+                    {req.reason && (
+                      <p class="mt-1 text-sm text-slate-500 italic">“{req.reason}”</p>
+                    )}
+                    {req.document_path && (
+                      <a
+                        class="mt-2 inline-block text-sm font-semibold text-brand-700 hover:underline"
+                        href={`/api/leaves/document?id=${req.id}`}
+                        target="_blank"
+                        rel="noopener"
+                      >
+                        View medical certificate
+                      </a>
+                    )}
+                  </div>
+
+                  <div class="shrink-0 text-right">
+                    <span class:list={['pill', coverageTone(worst)]}>
+                      {worst
+                        ? `${worst.effective} of ${worst.total_staff} on duty · ${worst.ratio_pct}%`
+                        : 'Coverage unknown'}
+                    </span>
+                    {worst && (
+                      <p class="mt-1 text-xs text-slate-500">
+                        lowest on {formatDate(cov!.date)}
+                        {Number(req.days_count) > 7 && <> · first 7 days checked</>}
+                      </p>
+                    )}
+                    {worst?.below_threshold && (
+                      <p class="mt-1 max-w-xs text-xs font-semibold text-rose-700">
+                        Approving this leaves the department below the {threshold}% coverage
+                        threshold.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <form method="post" action="/api/leaves/approve" class="mt-4 flex flex-wrap items-end gap-3">
+                  <input type="hidden" name="id" value={req.id} />
+                  <input type="hidden" name="back" value={`/hod/leave?department=${departmentId}`} />
+                  <div class="min-w-[16rem] flex-1">
+                    <label class="sr-only" for={`note-${req.id}`}>Note</label>
+                    <input
+                      class="field-input"
+                      id={`note-${req.id}`}
+                      name="note"
+                      maxlength="300"
+                      placeholder="Note for the employee (optional)"
+                    />
+                  </div>
+                  <button type="submit" name="decision" value="approve" class="btn-primary">
+                    Approve
+                  </button>
+                  <button type="submit" name="decision" value="reject" class="btn-secondary">
+                    Reject
+                  </button>
+                </form>
+              </li>
+            );
+          })}
+        </ul>
+      )
+    }
+  </section>
+
+  {
+    decided.length > 0 && (
+      <section class="card mt-6 overflow-hidden">
+        <header class="border-b border-slate-200 px-5 py-4">
+          <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">Decided</h2>
+        </header>
+        <table class="w-full text-left text-sm">
+          <thead class="bg-slate-50 text-xs tracking-wide text-slate-500 uppercase">
+            <tr>
+              <th scope="col" class="px-5 py-3 font-semibold">Employee</th>
+              <th scope="col" class="px-5 py-3 font-semibold">Type</th>
+              <th scope="col" class="px-5 py-3 font-semibold">Dates</th>
+              <th scope="col" class="px-5 py-3 font-semibold">Days</th>
+              <th scope="col" class="px-5 py-3 font-semibold">Outcome</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {decided.slice(0, 25).map((req) => (
+              <tr>
+                <td class="px-5 py-3 font-medium text-slate-900">
+                  {nameFor.get(req.employee_id)?.full_name ?? '—'}
+                </td>
+                <td class="px-5 py-3 text-slate-600">{req.leave_type}</td>
+                <td class="px-5 py-3 whitespace-nowrap text-slate-600">
+                  {formatDate(req.start_date)} – {formatDate(req.end_date)}
+                </td>
+                <td class="px-5 py-3 tabular-nums text-slate-600">{req.days_count}</td>
+                <td class="px-5 py-3">
+                  <span class:list={['pill', LEAVE_STATUS_STYLES[req.status]]}>
+                    {LEAVE_STATUS_LABELS[req.status]}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    )
+  }
+</AppLayout>

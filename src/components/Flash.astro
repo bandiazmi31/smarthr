@@ -18,6 +18,19 @@ const messages: Record<string, string> = {
   department_deleted: 'Department deleted.',
   department_not_found: 'That department could not be found.',
   settings_saved: 'Attendance settings saved.',
+  leave_requested: 'Leave request submitted for approval.',
+  leave_approved: 'Leave approved and the balance updated.',
+  leave_rejected: 'Leave request rejected.',
+  leave_cancelled: 'Leave request withdrawn.',
+  overtime_requested: 'Overtime raised for approval.',
+  overtime_approved: 'Overtime approved.',
+  overtime_rejected: 'Overtime rejected.',
+  period_created: 'Cut-off period created.',
+  period_locked: 'Period locked. Attendance and overtime inside it are now frozen.',
+  period_reopened: 'Period reopened for editing.',
+  holiday_saved: 'Public holiday added.',
+  holiday_removed: 'Public holiday removed.',
+  level_saved: 'Job level added.',
   roster_published: 'Roster published.',
   roster_unchanged: 'No changes to publish.',
   clocked_in: 'Clocked in. Have a good shift.',
@@ -48,6 +61,7 @@ const messages: Record<string, string> = {
 const n = params.get('n');
 
 const counted: Record<string, (value: string) => string> = {
+  points_generated: (v) => `Service charge points recalculated for ${v} employee${v === '1' ? '' : 's'}.`,
   roster_published: (v) => `Roster published. ${v} shift${v === '1' ? '' : 's'} changed.`,
   clocked_in_late: (v) => `Clocked in — ${v} minute${v === '1' ? '' : 's'} late.`,
   clocked_out: (v) => `Clocked out. ${Math.floor(Number(v) / 60)}h ${Number(v) % 60}m recorded.`,

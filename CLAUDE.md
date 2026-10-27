@@ -116,6 +116,33 @@ file records the decisions worth knowing before changing anything.
   `my_shift_swaps()` or the snapshot columns — never by joining `rosters`, which
   may be gone — and `decide_shift_swap` refuses cleanly when either side is NULL.
 
+## Phase 3: leave, overtime and pre-payroll
+
+- All the policy numbers live in `hotel_settings`: annual days, sick-certificate
+  threshold, coverage threshold, late penalty, cut-off day, and both multipliers.
+  Nothing is hard-coded in a function or an endpoint.
+- **Leave days are calendar days, inclusive.** Counting only rostered days looks
+  more accurate until you notice a future range has no roster published yet,
+  which would make the leave free. If policy wants working days, change
+  `request_leave` and `pre_payroll_timesheet` together.
+- **Overtime is capped twice.** `decide_overtime` grants
+  `least(requested, actual, what the HOD typed)`, so an approval can never pay
+  for time the clock did not record.
+- **Locking a period is a trigger, not a policy**, so it blocks a direct
+  database connection as well as the app. Anything that writes attendance or
+  overtime must handle `P0007`.
+- **`pre_payroll_timesheet` is SECURITY DEFINER and returns everyone's figures**,
+  so it checks `is_hr_staff()` itself. A grant is not a gate: the first version
+  shipped without the check and any employee could have read the whole payroll
+  over `/rest/v1/rpc`. Same for `leave_coverage`, which is HOD/HR only.
+- Use `describeOvertimeError`, not `describeLeaveError`, in the overtime
+  endpoints — sharing one mapper made a duplicate overtime report "You already
+  have a leave request covering those dates."
+- A `RETURNS TABLE` signature must match the query's column types exactly.
+  `departments.name` is `varchar(100)`, so the timesheet casts every text column
+  explicitly; without that the call fails with "structure of query does not
+  match function result type".
+
 ## Gotchas
 
 - `@apply` in Tailwind v4 cannot reference a class defined in `@layer components`.
@@ -135,6 +162,9 @@ file records the decisions worth knowing before changing anything.
 - The login form must not default `redirect` to an HR path: HR, HOD and staff each
   have a different home and `/api/auth/login` already picks it. Hardcoding one
   bounced the other two through a "not permitted" redirect.
+- Distance columns are `numeric(12,2)`, not `(8,2)`. The narrower type capped at
+  ~1,000 km, so a clock-out far from the hotel raised "numeric field overflow"
+  instead of being recorded and flagged.
 - The service worker caches only the offline shell. Attendance is live, geofenced
   and legally significant, so nothing under `/api` or `/mobile` may be served from
   cache.

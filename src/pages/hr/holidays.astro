@@ -1,0 +1,138 @@
+---
+import AppLayout from '../../layouts/AppLayout.astro';
+import Flash from '../../components/Flash.astro';
+import { formatDate } from '../../lib/format';
+import { todayIn } from '../../lib/datetime';
+import type { HotelSettingsRow, JobLevelRow, MasterHolidayRow } from '../../types/database';
+
+const { supabase } = Astro.locals;
+
+const [settingsResult, holidaysResult, levelsResult] = await Promise.all([
+  supabase.from('hotel_settings').select('*').eq('id', true).maybeSingle(),
+  supabase.from('master_holidays').select('*').order('holiday_date', { ascending: false }).limit(60),
+  supabase.from('job_levels').select('*').order('sort_order', { ascending: true }),
+]);
+
+const settings = settingsResult.data as HotelSettingsRow | null;
+const timeZone = settings?.timezone ?? 'UTC';
+const holidays = (holidaysResult.data ?? []) as MasterHolidayRow[];
+const levels = (levelsResult.data ?? []) as JobLevelRow[];
+const today = todayIn(timeZone);
+
+const upcoming = holidays.filter((h) => h.holiday_date >= today);
+const past = holidays.filter((h) => h.holiday_date < today);
+---
+
+<AppLayout
+  title="Holidays & levels"
+  heading="Holidays & job levels"
+  description="A shift on a public holiday earns the holiday multiplier; job levels set service-charge base points."
+>
+  <Flash />
+
+  <div class="grid gap-6 xl:grid-cols-2 xl:items-start">
+    <section class="card overflow-hidden">
+      <header class="border-b border-slate-200 px-5 py-4">
+        <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">
+          Public holidays
+        </h2>
+        <p class="mt-1 text-sm text-slate-500">
+          Default multiplier {settings?.public_holiday_multiplier ?? 2}× ·
+          ordinary overtime {settings?.overtime_multiplier ?? 1.5}×
+        </p>
+      </header>
+
+      <form method="post" action="/api/holidays/save" class="grid gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 sm:grid-cols-[150px_1fr_110px_auto] sm:items-end">
+        <div>
+          <label class="field-label" for="holiday_date">Date</label>
+          <input class="field-input" id="holiday_date" name="holiday_date" type="date" required />
+        </div>
+        <div>
+          <label class="field-label" for="description">Description</label>
+          <input class="field-input" id="description" name="description" maxlength="120" placeholder="e.g. Idul Fitri" required />
+        </div>
+        <div>
+          <label class="field-label" for="multiplier">Rate</label>
+          <input class="field-input" id="multiplier" name="multiplier" type="number" step="0.25" min="1" max="10" placeholder="default" />
+        </div>
+        <button type="submit" class="btn-primary">Add</button>
+      </form>
+
+      {
+        holidays.length === 0 ? (
+          <p class="px-5 py-12 text-center text-sm text-slate-500">
+            No holidays recorded. Overtime will use the ordinary rate everywhere.
+          </p>
+        ) : (
+          <ul class="divide-y divide-slate-100">
+            {[...upcoming, ...past].map((h) => (
+              <li class:list={['flex items-center justify-between gap-3 px-5 py-3', h.holiday_date < today && 'opacity-60']}>
+                <div>
+                  <p class="text-sm font-semibold text-slate-900">{h.description}</p>
+                  <p class="text-xs text-slate-500">{formatDate(h.holiday_date)}</p>
+                </div>
+                <div class="flex items-center gap-3">
+                  <span class="pill bg-brand-50 text-brand-700">
+                    {h.multiplier ?? settings?.public_holiday_multiplier ?? 2}×
+                  </span>
+                  <form method="post" action="/api/holidays/delete">
+                    <input type="hidden" name="id" value={h.id} />
+                    <button type="submit" class="btn-danger">Remove</button>
+                  </form>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    </section>
+
+    <section class="card overflow-hidden">
+      <header class="border-b border-slate-200 px-5 py-4">
+        <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">
+          Service-charge job levels
+        </h2>
+        <p class="mt-1 text-sm text-slate-500">
+          Base points per level. Assign a level on each employee record.
+        </p>
+      </header>
+
+      <form method="post" action="/api/holidays/save-level" class="grid gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 sm:grid-cols-[1fr_120px_auto] sm:items-end">
+        <div>
+          <label class="field-label" for="level_name">Level name</label>
+          <input class="field-input" id="level_name" name="name" maxlength="60" placeholder="e.g. Head of Department" required />
+        </div>
+        <div>
+          <label class="field-label" for="base_points">Base points</label>
+          <input class="field-input" id="base_points" name="base_points" type="number" step="0.5" min="0" required />
+        </div>
+        <button type="submit" class="btn-primary">Add</button>
+      </form>
+
+      <table class="w-full text-left text-sm">
+        <thead class="bg-slate-50 text-xs tracking-wide text-slate-500 uppercase">
+          <tr>
+            <th scope="col" class="px-5 py-3 font-semibold">Level</th>
+            <th scope="col" class="px-5 py-3 text-right font-semibold">Base points</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {
+            levels.map((l) => (
+              <tr>
+                <td class="px-5 py-3 font-medium text-slate-900">{l.name}</td>
+                <td class="px-5 py-3 text-right tabular-nums text-slate-600">{l.base_points}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+
+      <footer class="border-t border-slate-200 px-5 py-3 text-xs text-slate-500">
+        Points are prorated by worked days over scheduled days, then reduced by
+        {' '}{settings?.late_penalty_pct ?? 10}% when an employee is late more than
+        {' '}{settings?.late_penalty_threshold ?? 3} times in the period.
+      </footer>
+    </section>
+  </div>
+</AppLayout>
