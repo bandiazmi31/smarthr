@@ -95,6 +95,14 @@ export type HotelSettingsRow = {
   geofence_radius_meters: number;
   early_clock_in_limit_mins: number;
   photo_retention_days: number;
+  annual_leave_days: number;
+  sick_cert_required_after_days: number;
+  leave_coverage_threshold_pct: number;
+  late_penalty_threshold: number;
+  late_penalty_pct: number;
+  payroll_cutoff_day: number;
+  overtime_multiplier: number;
+  public_holiday_multiplier: number;
   timezone: string;
   updated_at: string;
   updated_by: string | null;
@@ -261,6 +269,161 @@ export type PortalIdentityRow = {
   portal_enabled: boolean;
 };
 
+export type LeaveType = 'Annual' | 'Sick' | 'Unpaid';
+export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+export type OvertimeStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+export type PayrollPeriodStatus = 'open' | 'locked';
+
+export type MasterHolidayRow = {
+  id: string;
+  holiday_date: string;
+  description: string;
+  multiplier: number | null;
+  created_at: string;
+};
+
+export type JobLevelRow = {
+  id: string;
+  name: string;
+  base_points: number;
+  sort_order: number;
+  created_at: string;
+};
+
+export type LeaveBalanceRow = {
+  id: string;
+  employee_id: string;
+  year: number;
+  annual_allocated: number;
+  annual_used: number;
+  sick_used: number;
+  unpaid_used: number;
+  created_at: string;
+  updated_at: string;
+};
+
+/** What `my_leave_balance()` returns. */
+export type MyLeaveBalanceRow = {
+  year: number;
+  annual_allocated: number;
+  annual_used: number;
+  annual_remaining: number;
+  sick_used: number;
+  unpaid_used: number;
+};
+
+export type LeaveRequestRow = {
+  id: string;
+  employee_id: string;
+  department_id: string | null;
+  leave_type: LeaveType;
+  start_date: string;
+  end_date: string;
+  days_count: number;
+  reason: string | null;
+  document_path: string | null;
+  status: LeaveStatus;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  created_at: string;
+};
+
+/** What `leave_coverage()` returns. */
+export type LeaveCoverageRow = {
+  total_staff: number;
+  scheduled: number;
+  on_leave: number;
+  effective: number;
+  ratio_pct: number;
+  below_threshold: boolean;
+};
+
+export type OvertimeRecordRow = {
+  id: string;
+  roster_id: string;
+  employee_id: string;
+  department_id: string | null;
+  requested_hours: number;
+  approved_hours: number | null;
+  multiplier_applied: number | null;
+  is_public_holiday: boolean;
+  reason: string | null;
+  status: OvertimeStatus;
+  requested_by: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  created_at: string;
+};
+
+/** The `overtime_review` view: request plus what the clock actually recorded. */
+export type OvertimeReviewRow = OvertimeRecordRow & {
+  full_name: string;
+  staff_number: string;
+  shift_date: string;
+  shift_name: string;
+  shift_code: string;
+  expected_clock_out: string;
+  clock_out_time: string | null;
+  actual_overtime_minutes: number;
+  actual_overtime_hours: number;
+  falls_on_holiday: boolean;
+  holiday_description: string | null;
+};
+
+export type PayrollPeriodRow = {
+  id: string;
+  label: string;
+  start_date: string;
+  end_date: string;
+  status: PayrollPeriodStatus;
+  locked_at: string | null;
+  locked_by: string | null;
+  created_at: string;
+};
+
+export type ServiceChargePointRow = {
+  id: string;
+  employee_id: string;
+  period_month: number;
+  period_year: number;
+  period_start: string;
+  period_end: string;
+  job_level: string | null;
+  base_points: number;
+  scheduled_days: number;
+  worked_days: number;
+  prorated_points: number;
+  late_count: number;
+  penalty_pct: number;
+  penalty_deduction: number;
+  final_points: number;
+  generated_at: string;
+};
+
+/** One row of the Finance hand-off. */
+export type PrePayrollRow = {
+  staff_number: string;
+  full_name: string;
+  department: string;
+  job_title: string;
+  job_level: string;
+  employment_status: string;
+  scheduled_days: number;
+  worked_days: number;
+  late_count: number;
+  total_late_minutes: number;
+  total_worked_minutes: number;
+  overtime_hours: number;
+  overtime_weighted_hours: number;
+  holiday_overtime_hours: number;
+  annual_leave_days: number;
+  sick_leave_days: number;
+  unpaid_leave_days: number;
+  service_charge_points: number;
+};
+
 export type HrProfileRow = {
   id: string;
   full_name: string;
@@ -325,6 +488,48 @@ export type Database = {
         Update: Partial<ShiftSwapRow>;
         Relationships: [];
       };
+      master_holidays: {
+        Row: MasterHolidayRow;
+        Insert: Partial<MasterHolidayRow> & Pick<MasterHolidayRow, 'holiday_date' | 'description'>;
+        Update: Partial<MasterHolidayRow>;
+        Relationships: [];
+      };
+      job_levels: {
+        Row: JobLevelRow;
+        Insert: Partial<JobLevelRow> & Pick<JobLevelRow, 'name' | 'base_points'>;
+        Update: Partial<JobLevelRow>;
+        Relationships: [];
+      };
+      leave_balances: {
+        Row: LeaveBalanceRow;
+        Insert: Partial<LeaveBalanceRow> & Pick<LeaveBalanceRow, 'employee_id' | 'year'>;
+        Update: Partial<LeaveBalanceRow>;
+        Relationships: [];
+      };
+      leave_requests: {
+        Row: LeaveRequestRow;
+        Insert: Partial<LeaveRequestRow>;
+        Update: Partial<LeaveRequestRow>;
+        Relationships: [];
+      };
+      overtime_records: {
+        Row: OvertimeRecordRow;
+        Insert: Partial<OvertimeRecordRow>;
+        Update: Partial<OvertimeRecordRow>;
+        Relationships: [];
+      };
+      payroll_periods: {
+        Row: PayrollPeriodRow;
+        Insert: Partial<PayrollPeriodRow> & Pick<PayrollPeriodRow, 'label' | 'start_date' | 'end_date'>;
+        Update: Partial<PayrollPeriodRow>;
+        Relationships: [];
+      };
+      service_charge_points: {
+        Row: ServiceChargePointRow;
+        Insert: Partial<ServiceChargePointRow>;
+        Update: Partial<ServiceChargePointRow>;
+        Relationships: [];
+      };
       hr_profiles: {
         Row: HrProfileRow;
         Insert: Partial<HrProfileRow> & Pick<HrProfileRow, 'id' | 'full_name'>;
@@ -351,6 +556,10 @@ export type Database = {
       };
       portal_identity: {
         Row: PortalIdentityRow;
+        Relationships: [];
+      };
+      overtime_review: {
+        Row: OvertimeReviewRow;
         Relationships: [];
       };
     };
@@ -383,6 +592,47 @@ export type Database = {
       generate_backoffice_rosters: { Args: { p_week_start?: string | null }; Returns: number };
       swappable_shifts: { Args: Record<string, never>; Returns: SwappableShiftRow[] };
       my_shift_swaps: { Args: Record<string, never>; Returns: ShiftSwapDetailRow[] };
+      my_leave_balance: { Args: { p_year?: number | null }; Returns: MyLeaveBalanceRow[] };
+      leave_coverage: {
+        Args: { p_department_id: string; p_date: string };
+        Returns: LeaveCoverageRow[];
+      };
+      request_leave: {
+        Args: {
+          p_leave_type: string;
+          p_start_date: string;
+          p_end_date: string;
+          p_reason?: string | null;
+          p_document_path?: string | null;
+        };
+        Returns: string;
+      };
+      decide_leave_request: {
+        Args: { p_request_id: string; p_approve: boolean; p_note?: string | null };
+        Returns: string;
+      };
+      cancel_leave_request: { Args: { p_request_id: string }; Returns: string };
+      request_overtime: {
+        Args: { p_roster_id: string; p_hours: number; p_reason?: string | null };
+        Returns: string;
+      };
+      decide_overtime: {
+        Args: {
+          p_record_id: string;
+          p_approve: boolean;
+          p_approved_hours?: number | null;
+          p_note?: string | null;
+        };
+        Returns: number;
+      };
+      overtime_multiplier_for: { Args: { p_date: string }; Returns: number };
+      payroll_period_range: {
+        Args: { p_month: number; p_year: number };
+        Returns: Array<{ start_date: string; end_date: string }>;
+      };
+      set_payroll_period_lock: { Args: { p_period_id: string; p_locked: boolean }; Returns: string };
+      generate_service_charge_points: { Args: { p_month: number; p_year: number }; Returns: number };
+      pre_payroll_timesheet: { Args: { p_start: string; p_end: string }; Returns: PrePayrollRow[] };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

@@ -1,6 +1,6 @@
 # Smart HR — Hotel HRIS
 
-Hotel HR system in two parts:
+Hotel HR system in three phases:
 
 - **Phase 1 — Centralized HRIS.** One register for active staff and alumni, a
   document archive, contract-expiry alerts, department master data, CSV export.
@@ -8,6 +8,10 @@ Hotel HR system in two parts:
   staff portal (PWA) with geofenced clock-in and a live selfie, peer-to-peer
   shift swaps with HOD approval, and a weekly cron that auto-rosters backoffice
   staff.
+- **Phase 3 — Leave & Pre-Payroll Engine.** Leave balances and requests with a
+  coverage warning for HODs, approved-only overtime with public-holiday
+  multipliers, hospitality service-charge points, and a locked monthly cut-off
+  that exports an `.xlsx` timesheet for Finance.
 
 **Stack:** Astro (Node SSR) · Supabase (Postgres + Auth + Storage + pg_cron) ·
 Tailwind CSS v4
@@ -56,8 +60,19 @@ the same trigger does the linking.
 | Shift swaps: colleague accepts, then HOD approves | `/mobile/swaps` |
 | Mon–Fri backoffice rosters generated every Sunday | `pg_cron` → `generate_backoffice_rosters()` |
 
-Out of scope by design (Phase 3+): payroll and service-charge distribution,
-leave/PTO workflows.
+## What Phase 3 does
+
+| Capability | Where |
+| --- | --- |
+| Leave balance, requests, medical certificates | `/mobile/leave` |
+| HOD approval with a live coverage ratio | `/hod/leave` |
+| Overtime sign-off against the clock | `/hod/overtime` |
+| Public holidays and service-charge job levels | `/hr/holidays` |
+| Cut-off periods, point recalculation, `.xlsx` export | `/hr/payroll` |
+| Leave, overtime and payroll policy | `/hr/settings` |
+
+Out of scope by design: the payroll calculation itself. Phase 3 stops at the
+Finance hand-off — it produces hours, lateness, overtime and points, not money.
 
 ---
 
@@ -188,6 +203,41 @@ roster references are `ON DELETE SET NULL`. The approval trail is the point of t
 feature, so it has to outlive the shifts it describes — re-publishing a week must
 not erase who agreed to what.
 
+### Phase 3 schema
+
+- **`leave_balances`** / **`leave_requests`** — quota per employee per year, and
+  the request workflow. The balance row is created lazily from
+  `hotel_settings.annual_leave_days`; approval is the only thing that moves it.
+- **`overtime_records`** — one per roster. Approved hours are capped by *both*
+  the request and what the clock recorded, so a generous sign-off cannot invent
+  time that was never worked.
+- **`master_holidays`** — a shift on one of these earns the holiday multiplier.
+  Each row may override the hotel-wide rate.
+- **`job_levels`** + `employees.job_level_id` — service-charge base points.
+  NULL means not in the pool, which is a real case for daily workers.
+- **`service_charge_points`** — a monthly snapshot, not a live calculation: the
+  points Finance was handed must not drift afterwards.
+- **`payroll_periods`** — cut-off windows. Locking one freezes the attendance
+  and overtime it covers, enforced by triggers on the tables themselves.
+
+### Core Phase 3 logic
+
+**Coverage (PRD §3.1).** `leave_coverage(department, date)` returns
+`(scheduled − approved leave) / total department staff`, exactly as specified,
+and flags anything under `leave_coverage_threshold_pct`. The HOD screen probes
+each day of the request (capped at seven) and shows the *worst* day, since that
+is the one that actually breaks the roster.
+
+**Service charge (PRD §4.3).** Base points by job level, prorated by
+`worked_days / scheduled_days`, then reduced by `late_penalty_pct` when lateness
+exceeds `late_penalty_threshold`. Leave days are not rostered, so they neither
+earn nor cost points — change `generate_service_charge_points` if policy says
+paid leave should still earn.
+
+**Cut-off (PRD §1).** Locking a period raises `P0007` on any write to
+`attendance_logs` or `overtime_records` inside it. The guard is a trigger, not a
+policy, so it holds for a direct database connection too.
+
 ### Security model
 
 - Every table has RLS; every policy routes through `app_private.is_hr_staff()`, which
@@ -223,6 +273,8 @@ src/
     datetime.ts              week maths + hotel-timezone formatting
     roster.ts                publish-grid parsing
     attendance.ts            selfie decoding, coordinates, storage paths
+    leave.ts                 leave types, day counting, error messages
+    payroll.ts               timesheet columns shared by screen and export
     query.ts                 directory filters, shared by the page and the export
     flash.ts                 carries rejected submissions across a redirect
     constants.ts format.ts http.ts
@@ -231,7 +283,11 @@ src/
   pages/
     login.astro
     hod/roster.astro         weekly scheduling grid
-    mobile/                  index · clock-in · swaps · register  (PWA)
+    mobile/                  index · clock-in · swaps · leave · register  (PWA)
+    hod/leave.astro          approvals with coverage
+    hod/overtime.astro       overtime sign-off
+    hr/payroll.astro         cut-off periods + timesheet + export
+    hr/holidays.astro        holidays + job levels
     hr/settings.astro        geofence + shift definitions
     hr/departments/          index (form + table)
     hr/employees/            index · create · edit/[id]
@@ -258,6 +314,11 @@ The PRD's route table, as built:
 | `/mobile` | GET | Staff portal: today, this week, stats |
 | `/mobile/clock-in` | GET | GPS + camera capture |
 | `/mobile/swaps` | GET | Request, answer and approve swaps |
+| `/mobile/leave` | GET | Balance, request form, history |
+| `/hod/leave` | GET | Approvals with the coverage ratio |
+| `/hod/overtime` | GET | Overtime sign-off |
+| `/hr/payroll` | GET | Cut-off periods and the timesheet |
+| `/hr/holidays` | GET | Holidays and service-charge levels |
 | `/mobile/register` | GET | Staff self-activation |
 | `/hr/employees` | GET | Directory, stat cards, contract alerts, filters |
 | `/hr/employees/create` | GET | New employee form |
@@ -282,6 +343,17 @@ The PRD's route table, as built:
 | `/api/swaps/request` | POST | Open a swap |
 | `/api/swaps/respond` | POST | Colleague accepts/declines; requester withdraws |
 | `/api/swaps/approve` | POST | HOD decision; swaps the rosters |
+| `/api/leaves/request` | POST | Staff request, with optional certificate |
+| `/api/leaves/approve` | POST | HOD/HR decision; moves the balance |
+| `/api/leaves/cancel` | POST | Withdraw, or HR reverses an approval |
+| `/api/leaves/document` | GET | Signed URL for a medical certificate |
+| `/api/overtime/request` | POST | Raise overtime against a shift |
+| `/api/overtime/approve` | POST | HOD sign-off, capped by the clock |
+| `/api/payroll/period` | POST | Create, lock or reopen a cut-off |
+| `/api/payroll/generate-points` | POST | Recalculate service-charge points |
+| `/api/payroll/pre-payroll-export` | GET | `.xlsx` timesheet for Finance |
+| `/api/holidays/save` · `/delete` · `/save-level` | POST | Holiday and job-level master data |
+| `/api/settings/policy` | POST | Leave, overtime and payroll policy |
 
 Added beyond the PRD: `document-url` (needed because the bucket is private) and
 `deactivate`'s reactivate mode (a soft delete that cannot be undone is a trap).

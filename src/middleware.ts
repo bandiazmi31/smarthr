@@ -31,11 +31,20 @@ function isCrossSiteWrite(request: Request, origin: string): boolean {
 /** Which actors each area admits. */
 function isAllowed(pathname: string, actor: Actor): boolean {
   if (pathname.startsWith('/hr/') || pathname.startsWith('/api/employees/')) return actor.isHr;
-  if (pathname.startsWith('/api/departments/') || pathname.startsWith('/api/settings/')) {
+  if (
+    pathname.startsWith('/api/departments/')
+    || pathname.startsWith('/api/settings/')
+    || pathname.startsWith('/api/payroll/')
+    || pathname.startsWith('/api/holidays/')
+  ) {
     return actor.isHr;
   }
   if (pathname.startsWith('/hod/') || pathname.startsWith('/api/rosters/')) {
     return actor.isHr || actor.isHod;
+  }
+  // Staff raise leave and overtime; HODs and HR decide them.
+  if (pathname.startsWith('/api/leaves/') || pathname.startsWith('/api/overtime/')) {
+    return actor.employee !== null || actor.isHr;
   }
   if (pathname.startsWith('/mobile/') || pathname.startsWith('/api/attendance/')) {
     return actor.employee !== null;

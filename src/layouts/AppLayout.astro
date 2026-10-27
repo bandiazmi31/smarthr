@@ -35,6 +35,26 @@ const nav = [
     match: (p: string) => p.startsWith('/hod/roster'),
   },
   {
+    href: '/hod/leave',
+    label: 'Leave approvals',
+    match: (p: string) => p.startsWith('/hod/leave'),
+  },
+  {
+    href: '/hod/overtime',
+    label: 'Overtime',
+    match: (p: string) => p.startsWith('/hod/overtime'),
+  },
+  {
+    href: '/hr/payroll',
+    label: 'Pre-payroll',
+    match: (p: string) => p.startsWith('/hr/payroll'),
+  },
+  {
+    href: '/hr/holidays',
+    label: 'Holidays & levels',
+    match: (p: string) => p.startsWith('/hr/holidays'),
+  },
+  {
     href: '/hr/settings',
     label: 'Settings',
     match: (p: string) => p.startsWith('/hr/settings'),

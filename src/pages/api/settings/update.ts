@@ -16,6 +16,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const latitude = parseCoordinate(String(form.get('latitude') ?? ''), 90);
   const longitude = parseCoordinate(String(form.get('longitude') ?? ''), 180);
   const radius = Number.parseInt(String(form.get('geofence_radius_meters') ?? ''), 10);
+  const earlyLimit = Number.parseInt(String(form.get('early_clock_in_limit_mins') ?? ''), 10);
+  const retentionDays = Number.parseInt(String(form.get('photo_retention_days') ?? ''), 10);
   const timezone = String(form.get('timezone') ?? '').trim();
 
   if (!hotelName) return redirectBack('/hr/settings', { error: 'Hotel name is required.' });
@@ -23,6 +25,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (longitude === null) return redirectBack('/hr/settings', { error: 'Longitude must be between -180 and 180.' });
   if (!Number.isFinite(radius) || radius < 10 || radius > 5000) {
     return redirectBack('/hr/settings', { error: 'Geofence radius must be between 10 and 5000 metres.' });
+  }
+  if (!Number.isFinite(earlyLimit) || earlyLimit < 0 || earlyLimit > 480) {
+    return redirectBack('/hr/settings', { error: 'The clock-in window must be between 0 and 480 minutes.' });
+  }
+  if (!Number.isFinite(retentionDays) || retentionDays < 1 || retentionDays > 3650) {
+    return redirectBack('/hr/settings', { error: 'Selfie retention must be between 1 and 3650 days.' });
   }
 
   // Reject a timezone the runtime cannot resolve, rather than storing something
@@ -40,6 +48,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
       latitude,
       longitude,
       geofence_radius_meters: radius,
+      early_clock_in_limit_mins: earlyLimit,
+      photo_retention_days: retentionDays,
       timezone,
       updated_at: new Date().toISOString(),
       updated_by: locals.actor.userId,

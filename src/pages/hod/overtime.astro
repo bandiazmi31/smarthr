@@ -1,0 +1,193 @@
+---
+import AppLayout from '../../layouts/AppLayout.astro';
+import Flash from '../../components/Flash.astro';
+import { formatDate } from '../../lib/format';
+import { formatDateTimeIn } from '../../lib/datetime';
+import type { DepartmentRow, HotelSettingsRow, OvertimeReviewRow } from '../../types/database';
+
+const { supabase, actor } = Astro.locals;
+const url = Astro.url;
+
+const { data: settingsRow } = await supabase
+  .from('hotel_settings').select('*').eq('id', true).maybeSingle();
+const settings = settingsRow as HotelSettingsRow | null;
+const timeZone = settings?.timezone ?? 'UTC';
+
+const requestedDept = url.searchParams.get('department') ?? '';
+const departmentId = actor.isHr
+  ? requestedDept || actor.employee?.department_id || ''
+  : (actor.employee?.department_id ?? '');
+
+const [departmentsResult, reviewResult] = await Promise.all([
+  actor.isHr
+    ? supabase.from('departments').select('id, name').order('name')
+    : Promise.resolve({ data: null, error: null }),
+  departmentId
+    ? supabase
+        .from('overtime_review')
+        .select('*')
+        .eq('department_id', departmentId)
+        .order('shift_date', { ascending: false })
+        .limit(100)
+    : Promise.resolve({ data: null, error: null }),
+]);
+
+const departments = (departmentsResult.data ?? []) as Pick<DepartmentRow, 'id' | 'name'>[];
+const rows = (reviewResult.data ?? []) as OvertimeReviewRow[];
+const pending = rows.filter((r) => r.status === 'pending');
+const decided = rows.filter((r) => r.status !== 'pending');
+
+const departmentName =
+  departments.find((d) => d.id === departmentId)?.name ??
+  actor.employee?.department_name ??
+  'Department';
+
+const statusStyles: Record<string, string> = {
+  pending: 'bg-amber-100 text-amber-800',
+  approved: 'bg-emerald-100 text-emerald-800',
+  rejected: 'bg-rose-100 text-rose-800',
+  cancelled: 'bg-slate-100 text-slate-600',
+};
+---
+
+<AppLayout
+  title="Overtime"
+  heading={`Overtime · ${departmentName}`}
+  description="Approved hours are capped by the request and by the clock."
+>
+  <Flash />
+
+  {
+    actor.isHr && departments.length > 0 && (
+      <form method="get" class="card mb-5 flex flex-wrap items-center gap-3 px-5 py-4">
+        <label class="text-sm font-medium text-slate-700" for="department">Department</label>
+        <select class="field-input max-w-xs" id="department" name="department">
+          {departments.map((d) => (
+            <option value={d.id} selected={d.id === departmentId}>{d.name}</option>
+          ))}
+        </select>
+        <button type="submit" class="btn-secondary">View</button>
+      </form>
+    )
+  }
+
+  <section class="card overflow-hidden">
+    <header class="border-b border-slate-200 px-5 py-4">
+      <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">
+        Awaiting sign-off ({pending.length})
+      </h2>
+    </header>
+
+    {
+      pending.length === 0 ? (
+        <p class="px-5 py-12 text-center text-sm text-slate-500">
+          No overtime waiting. A record appears once someone raises one against a shift.
+        </p>
+      ) : (
+        <ul class="divide-y divide-slate-100">
+          {pending.map((row) => (
+            <li class="px-5 py-4">
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div class="min-w-0">
+                  <p class="font-semibold text-slate-900">
+                    {row.full_name}
+                    <span class="ml-2 text-sm font-normal text-slate-500">{row.staff_number}</span>
+                  </p>
+                  <p class="mt-0.5 text-sm text-slate-600">
+                    {formatDate(row.shift_date)} · {row.shift_name} · rostered to finish{' '}
+                    {formatDateTimeIn(row.expected_clock_out, timeZone)}
+                  </p>
+                  <p class="mt-0.5 text-sm text-slate-600">
+                    Clocked out {formatDateTimeIn(row.clock_out_time, timeZone)}
+                  </p>
+                  {row.reason && <p class="mt-1 text-sm text-slate-500 italic">“{row.reason}”</p>}
+                </div>
+
+                <div class="shrink-0 text-right">
+                  <p class="text-sm text-slate-500">
+                    Requested <strong class="text-slate-900">{row.requested_hours}h</strong>
+                  </p>
+                  <p class="text-sm text-slate-500">
+                    Clock shows <strong class="text-slate-900">{row.actual_overtime_hours}h</strong>
+                  </p>
+                  {row.falls_on_holiday && (
+                    <span class="pill mt-1 bg-brand-50 text-brand-700">
+                      {row.holiday_description ?? 'Public holiday'}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <form method="post" action="/api/overtime/approve" class="mt-4 flex flex-wrap items-end gap-3">
+                <input type="hidden" name="id" value={row.id} />
+                <input type="hidden" name="back" value={`/hod/overtime?department=${departmentId}`} />
+                <div>
+                  <label class="field-label" for={`hours-${row.id}`}>Approve hours</label>
+                  <input
+                    class="field-input w-32"
+                    id={`hours-${row.id}`}
+                    name="approved_hours"
+                    type="number"
+                    step="0.25"
+                    min="0"
+                    max={Math.min(Number(row.requested_hours), Number(row.actual_overtime_hours))}
+                    value={Math.min(Number(row.requested_hours), Number(row.actual_overtime_hours))}
+                  />
+                </div>
+                <div class="min-w-[14rem] flex-1">
+                  <label class="sr-only" for={`note-${row.id}`}>Note</label>
+                  <input class="field-input" id={`note-${row.id}`} name="note" maxlength="300" placeholder="Note (optional)" />
+                </div>
+                <button type="submit" name="decision" value="approve" class="btn-primary">Approve</button>
+                <button type="submit" name="decision" value="reject" class="btn-secondary">Reject</button>
+              </form>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </section>
+
+  {
+    decided.length > 0 && (
+      <section class="card mt-6 overflow-hidden">
+        <header class="border-b border-slate-200 px-5 py-4">
+          <h2 class="text-sm font-semibold tracking-wide text-slate-500 uppercase">Decided</h2>
+        </header>
+        <table class="w-full text-left text-sm">
+          <thead class="bg-slate-50 text-xs tracking-wide text-slate-500 uppercase">
+            <tr>
+              <th scope="col" class="px-5 py-3 font-semibold">Employee</th>
+              <th scope="col" class="px-5 py-3 font-semibold">Shift</th>
+              <th scope="col" class="px-5 py-3 font-semibold">Approved</th>
+              <th scope="col" class="px-5 py-3 font-semibold">Rate</th>
+              <th scope="col" class="px-5 py-3 font-semibold">Status</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {decided.slice(0, 25).map((row) => (
+              <tr>
+                <td class="px-5 py-3 font-medium text-slate-900">{row.full_name}</td>
+                <td class="px-5 py-3 whitespace-nowrap text-slate-600">
+                  {formatDate(row.shift_date)} · {row.shift_code}
+                </td>
+                <td class="px-5 py-3 tabular-nums text-slate-600">
+                  {row.approved_hours ?? 0}h
+                </td>
+                <td class="px-5 py-3 tabular-nums text-slate-600">
+                  {row.multiplier_applied ? `${row.multiplier_applied}×` : '—'}
+                  {row.is_public_holiday && (
+                    <span class="ml-1 text-xs text-brand-700">holiday</span>
+                  )}
+                </td>
+                <td class="px-5 py-3">
+                  <span class:list={['pill', statusStyles[row.status]]}>{row.status}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    )
+  }
+</AppLayout>

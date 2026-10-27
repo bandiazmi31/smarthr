@@ -58,3 +58,12 @@ update public.employees set role = 'hod' where employee_id = 'HTL-0106';
 update public.employees
 set auto_schedule_shift_id = (select id from public.master_shifts where code = 'BO')
 where employee_id in ('HTL-0107', 'HTL-0108');
+
+
+-- Phase 3 demo: a couple of national holidays so the overtime multiplier has
+-- something to react to. Job levels and balances are created by the migrations
+-- and on first use respectively.
+insert into public.master_holidays (holiday_date, description) values
+  (date_trunc('year', now())::date + interval '0 day',  'New Year''s Day'),
+  (date_trunc('year', now())::date + interval '242 day','Independence Day')
+on conflict (holiday_date) do nothing;
